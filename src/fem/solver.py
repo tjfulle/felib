@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from .collections import NodalFieldEvaluator
 from . import model
 
 
@@ -44,7 +45,7 @@ class DirectSolver(Solver):
         K: NDArray = np.zeros((n + m, n + m), dtype=float)
         R: NDArray = np.zeros(n + m, dtype=float)
 
-        K[:n, :n], R[:n] = model.assemble(mod, u, du)
+        K[:n, :n], R[:n] = model.assemble(mod, 1, 1, [0.0, 0.0], 1.0, u, du)
 
         if mod.equations:
             C, r = model.build_linear_constraint(mod, u, du)
@@ -53,7 +54,7 @@ class DirectSolver(Solver):
             R[n:] = r
 
         # Condense out Dirichlet DOFs and solve condensed system
-        ddofs, dvals = mod.dirichlet_dofs, mod.dirichlet_vals
+        ddofs, dvals = mod.evaluate_dirichlet_bcs(1, 1, [0.0, 0.0], 1.0, u)
         fdofs = np.array(sorted(set(range(n)).difference(ddofs)), dtype=int)
         d = np.zeros(n + m)
         d[ddofs] = dvals
@@ -63,7 +64,7 @@ class DirectSolver(Solver):
 
         react = np.zeros_like(R[:n])
         du = np.zeros_like(u)
-        K[:n, :n], R[:n] = model.assemble(mod, d, du)
+        K[:n, :n], R[:n] = model.assemble(mod, 1, 1, [0.0, 0.0], 1.0, d, du)
         react[ddofs] = np.dot(K[np.ix_(ddofs, ddofs)], u[ddofs]) - R[:n][ddofs]
 
         solution = Solution(
@@ -90,21 +91,22 @@ class NonlinearNewtonSolver(Solver):
         du = np.zeros(n, dtype=float)
         lam = np.zeros(m, dtype=float)
 
-        ddofs, dvals = mod.dirichlet_dofs, mod.dirichlet_vals
-        fdofs = np.array(sorted(set(range(n)).difference(ddofs)), dtype=int)
-
         K: NDArray = np.zeros((n + m, n + m), dtype=float)
         R: NDArray = np.zeros(n + m, dtype=float)
         R0 = 1.0
 
         it = 0
         while it < self.maxiter:
+
+            ddofs, dvals = mod.evaluate_dirichlet_bcs(1, 1, [0.0, 0.0], 1.0, u)
+            fdofs = np.array(sorted(set(range(n)).difference(ddofs)), dtype=int)
+
             it += 1
 
             K.fill(0.0)
             R.fill(0.0)
 
-            K[:n, :n], R[:n] = model.assemble(mod, u, du)
+            K[:n, :n], R[:n] = model.assemble(mod, 1, 1, [0.0, 0.0], 1.0, u, du)
 
             if mod.equations:
                 C, r = model.build_linear_constraint(mod, u, du)
@@ -138,7 +140,7 @@ class NonlinearNewtonSolver(Solver):
 
         react = np.zeros_like(R[:n])
         du = np.zeros_like(u)
-        K[:n, :n], R[:n] = model.assemble(mod, u, du)
+        K[:n, :n], R[:n] = model.assemble(mod, 1, 1, [0.0, 0.0], 1.0, u, du)
         react = np.zeros(n)
         react[ddofs] = np.dot(K[np.ix_(ddofs, ddofs)], u[ddofs]) - R[:n][ddofs]
 

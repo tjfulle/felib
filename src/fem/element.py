@@ -1,18 +1,19 @@
 from abc import ABC
 from abc import abstractmethod
+from typing import Sequence
 from typing import Any
 from typing import Generator
 
 import numpy as np
 from numpy.typing import NDArray
 
-from .collections import DistributedLoad
 from .collections import RobinLoad
-from .collections import SurfaceLoad
+from .collections import DistributedSurfaceLoad
 from .constants import GRAVITY
 from .constants import PRESSURE
 from .constants import TRACTION
 from .material import Material
+from .collections import DistributedLoad
 
 
 class Element(ABC):
@@ -35,6 +36,10 @@ class Element(ABC):
     @abstractmethod
     def area(self, p: NDArray) -> float: ...
 
+    @property
+    @abstractmethod
+    def centroid(self, p: NDArray) -> NDArray: ...
+
     @abstractmethod
     def side_centroid(self, side: int, p: NDArray) -> NDArray: ...
 
@@ -42,10 +47,15 @@ class Element(ABC):
     def eval(
         self,
         material: Material,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
         p: NDArray,
         u: NDArray,
         dloads: list[DistributedLoad] | None = None,
-        sloads: list[SurfaceLoad] | None = None,
+        dsloads: list[tuple[int, DistributedSurfaceLoad]] | None = None,
         rloads: list[RobinLoad] | None = None,
     ) -> tuple[NDArray, NDArray]: ...
 
@@ -104,6 +114,9 @@ class IsoparametricElement(Element):
     @abstractmethod
     def interpolate_edge(self, p: NDArray, xi: float) -> tuple[float, ...]: ...
 
+    def centroid(self, p: NDArray) -> NDArray:
+        return np.asarray(p).mean(axis=0)
+
     def jacobian(self, p: NDArray, xi: NDArray) -> float:
         dNdxi = self.shape_derivative(xi)
         dxdxi = np.dot(dNdxi, p)
@@ -133,27 +146,33 @@ class IsoparametricElement(Element):
     def eval(
         self,
         material: Material,
+        step: int,
+        increment: int,
+        time: list[float],
+        dt: float,
+        eleno: int,
         p: NDArray,
         u: NDArray,
         dloads: list[DistributedLoad] | None = None,
-        sloads: list[SurfaceLoad] | None = None,
+        dsloads: list[tuple[int, DistributedSurfaceLoad]] | None = None,
         rloads: list[RobinLoad] | None = None,
     ) -> tuple[NDArray, NDArray]:
         dloads = dloads or []
-        sloads = sloads or []
+        dsloads = dsloads or []
         rloads = rloads or []
 
         ndof = self.nnode * self.dof_per_node
         re = np.zeros(ndof)
         ke = np.zeros((ndof, ndof))
 
-        for w, xi in self.integration_points:
+        for ipt, (w, xi) in enumerate(self.integration_points):
             # ------------------
             # Volume intetration
             # ------------------
             J = self.jacobian(p, xi)
             B = self.bmatrix(p, xi)
             P = self.pmatrix(xi)
+            x = self.interpolate(p, xi)
 
             # --- Internal terms
             e = np.dot(B, u)
@@ -162,25 +181,20 @@ class IsoparametricElement(Element):
             re += w * J * np.dot(B.T, s)
 
             for dload in dloads:
-                value = np.asarray(dload.value)
-                if dload.load_type == GRAVITY:
-                    value = value * material.density
+                value = dload(step, increment, time, dt, eleno, ipt, x)
                 re -= w * J * np.dot(P, value)
 
-        for sload in sloads:
-            nodes = self.sides[sload.edge]  # local node freedom table
+        for edge_no, dsload in dsloads:
+            nodes = self.sides[edge_no]
+            pd = p[nodes]
             nft = [self.dof_per_node * n + d for n in nodes for d in range(self.dof_per_node)]
-            for w, xi in self.edge_integration_points:
-                if sload.load_type == TRACTION:
-                    traction = np.asarray(sload.value)
-                elif sload.load_type == PRESSURE:
-                    n = self.edge_normal(sload.edge, p, xi)
-                    traction = -float(sload.value) * n
-                else:
-                    traction = np.asarray(sload.value)
-                st = self.ref_edge_coords(sload.edge, xi)
+            for ipt, (w, xi) in enumerate(self.edge_integration_points):
+                x = self.interpolate_edge(pd, xi)
+                n = self.edge_normal(edge_no, p, xi)
+                traction = dsload(step, increment, time, dt, eleno, edge_no, ipt, x, n)
+                st = self.ref_edge_coords(edge_no, xi)
                 P = self.pmatrix(st)[nft]
-                J = self.edge_jacobian(sload.edge, p, xi)
+                J = self.edge_jacobian(edge_no, p, xi)
                 re[nft] -= w * J * np.dot(P, traction)
 
         for rload in rloads:
@@ -188,7 +202,7 @@ class IsoparametricElement(Element):
             nft = [self.dof_per_node * n + d for n in nodes for d in range(self.dof_per_node)]
             H = np.asarray(rload.H)
             u0 = np.asarray(rload.u0)
-            for w, xi in self.edge_integration_points:
+            for ipt, (w, xi) in enumerate(self.edge_integration_points):
                 st = self.ref_edge_coords(rload.edge, xi)
                 P = self.pmatrix(st)[nft]
                 J = self.edge_jacobian(rload.edge, p, xi)

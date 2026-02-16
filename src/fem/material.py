@@ -1,22 +1,39 @@
 import numpy as np
 from numpy.typing import NDArray
+from .collections import ScalarField
 
 
 class Material:
-    density: float
+    _density: ScalarField | ScalarField
 
-    def __init__(self, density: float = 1.0, **properties: float) -> None:
-        raise NotImplementedError
+    def __init__(self, *, density: float | ScalarField | None = None, **properties: float) -> None:
+        from .collections import ConstantScalarField
+        if isinstance(density, (float, int)):
+            self._density = ConstantScalarField(density)
+        else:
+            self._density = density
 
     def eval(self, e: NDArray, ndir: int, nshr: int) -> tuple[NDArray, NDArray]:
         raise NotImplementedError
 
+    def has_density(self) -> bool:
+        return self._density is not None
+
+    def density(self, x: NDArray, t: float) -> float:
+        if self._density is None:
+            raise RuntimeError("Density has not been defined")
+        return self._density(x, t)
+
 
 class LinearElastic(Material):
     def __init__(
-        self, *, youngs_modulus: float, poissons_ratio: float, density: float = 1.0
+        self,
+        *,
+        density: float | ScalarField | None = None,
+        youngs_modulus: float,
+        poissons_ratio: float,
     ) -> None:
-        self.density = density
+        super().__init__(density=density)
         self.youngs_modulus = youngs_modulus
         assert self.youngs_modulus > 0
         self.poissons_ratio = poissons_ratio

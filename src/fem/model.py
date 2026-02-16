@@ -9,7 +9,8 @@ from .block import ElementBlock
 from .collections import DistributedLoad
 from .collections import Map
 from .collections import RobinLoad
-from .collections import SurfaceLoad
+from .collections import DistributedSurfaceLoad
+from .collections import NodalFieldEvaluator
 
 ArrayLike = NDArray | Sequence
 
@@ -28,14 +29,12 @@ class Model:
     node_map: Map
     elem_map: Map
 
-    dirichlet_dofs: NDArray
-    dirichlet_vals: NDArray
-    neumann_dofs: NDArray
-    neumann_vals: NDArray
+    dirichlet_bcs: list[list[int, int, NodalFieldEvaluator]]
+    neumann_bcs: list[list[int, int, NodalFieldEvaluator]]
 
     robin_loads: dict[int, dict[int, list[RobinLoad]]]
-    surface_loads: dict[int, dict[int, list[SurfaceLoad]]]
-    distributed_loads: dict[int, dict[int, list[DistributedLoad]]]
+    dsloads: dict[int, dict[int, list[tuple[int, DistributedSurfaceLoad]]]]
+    dloads: dict[int, dict[int, list[DistributedLoad]]]
 
     equations: list[list[int | float]] = field(default_factory=list)
 
@@ -46,18 +45,50 @@ class Model:
         self.nnode = self.coords.shape[0]
         self.nelem = self.connect.shape[0]
 
+    def evaluate_dirichlet_bcs(
+        self, step: int, increment: int, time: list[float], dt: float, u: NDArray
+    ) -> tuple[NDArray, NDArray]:
+        # Evaluate Dirichlet BCs
+        view = u.reshape((self.nnode, -1))
+        ddofs: list[int] = []
+        dvals: list[float] = []
+        for lid, i, evaluator in self.dirichlet_bcs:
+            dof = self.dof_map[lid, i]
+            gid = self.node_map[lid]
+            val = evaluator(
+                step=step,
+                increment=increment,
+                node=gid,
+                dof=i,
+                x=self.coords[lid] + view[lid],
+                time=time,
+                dt=dt,
+            )
+            if dof in ddofs:
+                j = ddofs.index(dof)
+                ddofs[j] = dof
+                dvals[j] = val
+            else:
+                ddofs.append(dof)
+                dvals.append(val)
+        return np.array(ddofs), np.array(dvals)
 
-def assemble(model: Model, u: NDArray, du: NDArray) -> tuple[NDArray, NDArray]:
+
+def assemble(model: Model, step: int, increment: int, time: Sequence[float], dt: float, u: NDArray, du: NDArray) -> tuple[NDArray, NDArray]:
     K = np.zeros((model.num_dof, model.num_dof), dtype=float)
     R = np.zeros(model.num_dof, dtype=float)
     for b, block in enumerate(model.blocks):
         ix = model.block_dof_map[b]
         bft = ix[ix != -1]
         kb, rb = block.assemble(
+            step,
+            increment,
+            time,
+            dt,
             u[bft],
             du[bft],
-            dloads=model.distributed_loads.get(b),
-            sloads=model.surface_loads.get(b),
+            dloads=model.dloads.get(b),
+            dsloads=model.dsloads.get(b),
             rloads=model.robin_loads.get(b),
         )
         K[np.ix_(bft, bft)] += kb

@@ -5,6 +5,8 @@ from typing import Sequence
 import numpy as np
 
 import fem
+X = fem.X
+Y = fem.Y
 
 
 def exercise(esize: float = 0.05):
@@ -32,17 +34,12 @@ def exercise(esize: float = 0.05):
     mesh_builder.elemset("All", region=Everywhere())
     mesh = mesh_builder.emit_mesh()
 
+    m = fem.material.LinearElastic(density=2400.0, youngs_modulus=30.0e9, poissons_ratio=0.3)
     builder = fem.builder.ModelBuilder(mesh)
-    builder.assign_properties(
-        block="Block-1",
-        element=fem.element.CPS3(),
-        material=fem.material.LinearElastic(
-            density=2400.0, youngs_modulus=30.0e9, poissons_ratio=0.3
-        ),
-    )
-    builder.boundary(nodeset="Top", bc=fem.collections.PinnedBoundary())
-    builder.traction(sideset="Bottom", vector=fem.collections.ConstantVector([400e3, -300e3]))
-    builder.gravity(elemset="All", vector=fem.collections.ConstantVector([0, -9.81]))
+    builder.assign_properties(block="Block-1", element=fem.element.CPS3(), material=m)
+    builder.boundary(nodes="Top", dofs=[X, Y], amplitude=0.0)
+    builder.traction(sideset="Bottom", magnitude=500e3, direction=[4/5, -3/5])
+    builder.gravity(elemset="All", g=9.81, direction=[0, -1])
     model = builder.emit_model()
 
     solver = fem.solver.DirectSolver()

@@ -1,4 +1,5 @@
 import logging
+from typing import Sequence
 from typing import TYPE_CHECKING
 from typing import Type
 
@@ -8,7 +9,7 @@ from numpy.typing import NDArray
 from .collections import DistributedLoad
 from .collections import Map
 from .collections import RobinLoad
-from .collections import SurfaceLoad
+from .collections import DistributedSurfaceLoad
 
 if TYPE_CHECKING:
     from .cell import Cell
@@ -106,27 +107,37 @@ class ElementBlock:
 
     def assemble(
         self,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
         u: NDArray,
         du: NDArray,
         dloads: dict[int, list[DistributedLoad]] | None = None,
-        sloads: dict[int, list[SurfaceLoad]] | None = None,
+        dsloads: dict[int, list[tuple[int, DistributedSurfaceLoad]]] | None = None,
         rloads: dict[int, list[RobinLoad]] | None = None,
     ) -> tuple[NDArray, NDArray]:
         K = np.zeros((self.num_dof, self.num_dof), dtype=float)
         R = np.zeros(self.num_dof, dtype=float)
         dloads = dloads or {}
-        sloads = sloads or {}
+        dsloads = dsloads or {}
         rloads = rloads or {}
         for e, nodes in enumerate(self.connect):
+            eleno = self.elem_map[e]
             eft = self.element_freedom_table(nodes)
             ue = u[eft]
             xe = self.coords[nodes]
             ke, re = self.element.eval(
                 self.material,
+                step,
+                increment,
+                time,
+                dt,
+                eleno,
                 xe,
                 ue,
                 dloads=dloads.get(e),
-                sloads=sloads.get(e),
+                dsloads=dsloads.get(e),
                 rloads=rloads.get(e),
             )
             K[np.ix_(eft, eft)] += ke
