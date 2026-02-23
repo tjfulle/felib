@@ -80,8 +80,8 @@ class NonlinearNewtonSolver(Solver):
         n = model.num_dof
         m = len(step.equations)
 
-        u = np.zeros(n, dtype=float)
-        du = np.zeros(n, dtype=float)
+        u = model.u[0, :].copy()
+        du = np.zeros_like(u, dtype=float)
         lam = np.zeros(m, dtype=float)
 
         K: NDArray = np.zeros((n + m, n + m), dtype=float)
@@ -89,11 +89,14 @@ class NonlinearNewtonSolver(Solver):
         R0 = 1.0
 
         it = 0
-        time = [step.start, 0.0]
+        time = [0.0, step.start]
         dt = step.period
+
+        fac: float = 1.0
+        ddofs = step.ddofs
+        fdofs = np.array(sorted(set(range(model.num_dof)) - set(ddofs)))
+
         while it < self.maxiter:
-            ddofs, dvals = model.evaluate_dirichlet_bcs(step)
-            fdofs = np.array(sorted(set(range(n)).difference(ddofs)), dtype=int)
 
             it += 1
 
@@ -114,6 +117,7 @@ class NonlinearNewtonSolver(Solver):
                     self.atol = 1e-8 * R0
 
             # Condense out Dirichlet DOFs and solve condensed system
+            dvals = step.dvals[0, :] + fac * (step.dvals[1, :] - step.dvals[0, :])
             delta = np.zeros(n + m)
             delta[fdofs] = np.linalg.solve(
                 K[np.ix_(fdofs, fdofs)],
@@ -132,9 +136,9 @@ class NonlinearNewtonSolver(Solver):
         else:
             raise RuntimeError(f"Newton iterations failed to converge after {it} iterations")
 
-        react = np.zeros_like(R[:n])
         du = np.zeros_like(u)
         K[:n, :n], R[:n] = model.assemble(step, 1, time, dt, u, du)
+
         react = np.zeros(n)
         react[ddofs] = np.dot(K[np.ix_(ddofs, ddofs)], u[ddofs]) - R[:n][ddofs]
 

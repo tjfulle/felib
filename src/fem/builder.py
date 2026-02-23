@@ -290,8 +290,8 @@ class StepBuilder(ABC):
 class StaticStepBuilder(StepBuilder):
     def __init__(self, name: str, period: float = 1.0) -> None:
         super().__init__(name=name, period=period)
-        self.dbcs: list[tuple[int, int, float]] = []
-        self.nbcs: list[tuple[int, int, float]] = []
+        self.dbcs: list[tuple[int, float]] = []
+        self.nbcs: list[tuple[int, float]] = []
         self.dsloads: DSLoadT = defaultdict(lambda: defaultdict(list))
         self.rloads: RLoadT = defaultdict(lambda: defaultdict(list))
         self.dloads: DLoadT = defaultdict(lambda: defaultdict(list))
@@ -362,22 +362,28 @@ class StaticStepBuilder(StepBuilder):
         )
 
     def construct_dbcs(self, model: Model) -> None:
+        seen: dict[int, float] = {}
         for nodeset, dofs, value in self.metadata.get("dbcs", {}).values():
             if nodeset not in model.nodesets:
                 raise ValueError(f"nodeset {nodeset} not defined")
             lids: list[int] = model.nodesets[nodeset]
             for lid in lids:
                 for dof in dofs:
-                    self.dbcs.append((lid, dof, value))
+                    DOF = model.dof_map[lid, dof]
+                    seen[DOF] = value
+        self.dbcs = [(k, seen[k]) for k in sorted(seen)]
 
     def construct_nbcs(self, model: Model) -> None:
+        seen: dict[int, float] = defaultdict(float)
         for nodeset, dofs, value in self.metadata.get("nbcs", {}).values():
             if nodeset not in model.nodesets:
                 raise ValueError(f"nodeset {nodeset} not defined")
             lids: list[int] = model.nodesets[nodeset]
             for lid in lids:
                 for dof in dofs:
-                    self.nbcs.append((lid, dof, value))
+                    DOF = model.dof_map[lid, dof]
+                    seen[DOF] += value
+        self.nbcs = [(k, seen[k]) for k in sorted(seen)]
 
     def construct_dloads(self, model: Model) -> None:
         dload: DistributedLoad

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import Sequence
 from typing import Type
+from .typing import DSLoadT, DLoadT, RLoadT
 
 import numpy as np
 from numpy.typing import NDArray
@@ -288,6 +289,17 @@ class RobinLoad:
     u0: NDArray
 
 
-# --------------------------------------------------------------------------
-# Surface/Edge Loads
-# --------------------------------------------------------------------------
+@dataclass
+class SolverState:
+    u0: NDArray
+    R0: NDArray
+    ddofs: NDArray
+    dvals: NDArray
+    fdofs: NDArray
+    time: list[float]
+    dt: float
+    step: int
+    dsloads: DSLoadT
+    dloads: DLoadT
+    rloads: RLoadT
+    equations: list[list[int | float]]

@@ -24,6 +24,12 @@ class Model:
     node_signatures: NDArray
 
     steps: list[Step] = field(default_factory=list)
+    u: NDArray = field(init=False)
+    R: NDArray = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.u = np.zeros((2, self.num_dof), dtype=float)
+        self.R = np.zeros((2, self.num_dof), dtype=float)
 
     @property
     def nnode(self) -> int:
@@ -69,21 +75,8 @@ class Model:
         self.steps.append(step)
 
     def solve(self) -> None:
-        parent: Step | None = None
         for step in self.steps:
-            step.initialize(parent)
-            solution = step.solve(self)
-            step.finalize(solution)
-            parent = step
-
-    def evaluate_dirichlet_bcs(self, step: Step) -> tuple[NDArray, NDArray]:
-        ddofs: list[int] = []
-        dvals: list[float] = []
-        for lid, ldof, value in step.dbcs:
-            dof = self.dof_map[lid, ldof]
-            ddofs.append(dof)
-            dvals.append(value)
-        return np.asarray(ddofs, dtype=int), np.asarray(dvals, dtype=float)
+            step.solution = step.solve(self)
 
     def assemble(
         self, step: Step, increment: int, time: Sequence[float], dt: float, u: NDArray, du: NDArray
