@@ -2,6 +2,7 @@ import logging
 from abc import ABC
 from abc import abstractmethod
 from collections import defaultdict
+from typing import Any
 from typing import Sequence
 from typing import Type
 
@@ -18,12 +19,12 @@ from .collections import Field
 from .collections import GravityLoad
 from .collections import PressureLoad
 from .collections import RobinLoad
-from .collections import Solution
 from .collections import TractionLoad
 from .element import Element
 from .material import Material
 from .mesh import Mesh
 from .model import Model
+from .step import DirectStep
 from .step import StaticStep
 from .step import Step
 from .typing import DLoadT
@@ -90,22 +91,18 @@ class MeshBuilder:
             raise ValueError(f"Topo block {name!r} already defined")
         blocks[name] = collections.BlockSpec(name=name, cell_type=cell_type, region=region)  # type: ignore
 
-    def assemble(self) -> None:
+    def construct_sets(self) -> None:
+        self.construct_nodesets()
+        self.construct_elemsets()
+        self.construct_sidesets()
+
+    def build(self) -> Mesh:
         if self.assembled:
             raise ValueError("MeshBuilder is already assembled")
         self.assemble_blocks()
         self.detect_topology()
         self.assembled = True
         self.construct_sets()
-
-    def construct_sets(self) -> None:
-        self.construct_nodesets()
-        self.construct_elemsets()
-        self.construct_sidesets()
-
-    def emit_mesh(self) -> Mesh:
-        if not self.assembled:
-            self.assemble()
         return Mesh(
             coords=self.coords,
             connect=self.connect,
@@ -284,11 +281,11 @@ class StepBuilder(ABC):
         self.metadata: dict[str, dict] = defaultdict(dict)
 
     @abstractmethod
-    def assemble(self, model: Model, parent: Step | None) -> Step: ...
+    def build(self, model: Model, parent: Step | None) -> Step: ...
 
 
 class StaticStepBuilder(StepBuilder):
-    def __init__(self, name: str, period: float = 1.0) -> None:
+    def __init__(self, name: str, period: float = 1.0, **options: Any) -> None:
         super().__init__(name=name, period=period)
         self.dbcs: list[tuple[int, float]] = []
         self.nbcs: list[tuple[int, float]] = []
@@ -296,6 +293,7 @@ class StaticStepBuilder(StepBuilder):
         self.rloads: RLoadT = defaultdict(lambda: defaultdict(list))
         self.dloads: DLoadT = defaultdict(lambda: defaultdict(list))
         self.mpcs: list[list[int | float]] = []
+        self.solver_opts = options
 
     def boundary(self, *, nodeset: str, dofs: int | list[int], value: float = 0.0) -> None:
         if isinstance(dofs, int):
@@ -342,7 +340,7 @@ class StaticStepBuilder(StepBuilder):
         constraints = self.metadata["constraints"]
         constraints[f"constraint-{len(constraints)}"] = (nodes, dofs, coeffs, rhs)
 
-    def assemble(self, model: Model, parent: Step | None) -> StaticStep:
+    def build(self, model: Model, parent: Step | None) -> StaticStep:
         self.construct_dbcs(model)
         self.construct_nbcs(model)
         self.construct_dloads(model)
@@ -359,6 +357,7 @@ class StaticStepBuilder(StepBuilder):
             dloads=self.dloads,
             rloads=self.rloads,
             equations=self.mpcs,
+            solver_options=self.solver_opts,
         )
 
     def construct_dbcs(self, model: Model) -> None:
@@ -454,9 +453,35 @@ class StaticStepBuilder(StepBuilder):
             for gid, dof, coeff in zip(nodes, dofs, coeffs):
                 if gid not in model.node_map:
                     raise ValueError(f"Node {gid} is not defined")
-                mpc.extend([model.node_map.local(gid), dof, coeff])
+                lid = model.node_map.local(gid)
+                DOF = model.dof_map[lid, dof]
+                mpc.extend([DOF, coeff])
             mpc.append(rhs)
             self.mpcs.append(mpc)
+
+
+class DirectStepBuilder(StaticStepBuilder):
+    def __init__(self, name: str, period: float = 1.0) -> None:
+        super().__init__(name, period=period)
+
+    def build(self, model: Model, parent: Step | None) -> DirectStep:  # type: ignore
+        self.construct_dbcs(model)
+        self.construct_nbcs(model)
+        self.construct_dloads(model)
+        self.construct_dsloads(model)
+        self.construct_rloads(model)
+        self.construct_constraints(model)
+        return DirectStep(
+            name=self.name,
+            parent=parent,
+            period=self.period,
+            dbcs=self.dbcs,
+            nbcs=self.nbcs,
+            dsloads=self.dsloads,
+            dloads=self.dloads,
+            rloads=self.rloads,
+            equations=self.mpcs,
+        )
 
 
 class ModelBuilder:
@@ -487,13 +512,21 @@ class ModelBuilder:
         else:
             raise ValueError(f"Element block {block!r} is not defined")
 
-    def static_step(self, name: str | None = None, period: float = 1.0) -> StaticStepBuilder:
+    def static_step(
+        self, name: str | None = None, period: float = 1.0, **options: Any
+    ) -> StaticStepBuilder:
         steps = self.metadata["steps"]
         name = name or f"step-{len(steps)}"
-        step = steps[name] = StaticStepBuilder(name=name, period=period)
+        step = steps[name] = StaticStepBuilder(name=name, period=period, **options)
         return step
 
-    def assemble(self) -> Model:
+    def direct_step(self, name: str | None = None, period: float = 1.0) -> DirectStepBuilder:
+        steps = self.metadata["steps"]
+        name = name or f"step-{len(steps)}"
+        step = steps[name] = DirectStepBuilder(name=name, period=period)
+        return step
+
+    def build(self) -> Model:
         if self.assembled:
             raise ValueError("ModelBuilder already assembled")
         blocks = {block.name for block in self.mesh.blocks}
@@ -511,7 +544,7 @@ class ModelBuilder:
         b: StepBuilder
         parent: Step | None = None
         for b in self.metadata.get("steps", {}).values():
-            step = b.assemble(model, parent=parent)
+            step = b.build(model, parent=parent)
             parent = step
             model.add_step(step)
         self.assembled = True

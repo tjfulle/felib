@@ -1,6 +1,6 @@
+from typing import TYPE_CHECKING
 from typing import Callable
 from typing import Sequence
-from typing import TYPE_CHECKING
 
 from numpy.typing import NDArray
 

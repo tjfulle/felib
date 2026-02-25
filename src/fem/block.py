@@ -86,6 +86,10 @@ class ElementBlock:
         # dof_map[node, dof] -> block (global) dof
         self.dof_map = np.arange(self.num_dof, dtype=int).reshape(self.num_nodes, -1)
 
+        self.pdata: NDArray = np.zeros(
+            (2, self.connect.shape[0], self.element.npts, self.element.ndir + self.element.nshr)
+        )
+
     @classmethod
     def from_topo_block(
         cls, blk: TopoBlock, element: "Element", material: "Material"

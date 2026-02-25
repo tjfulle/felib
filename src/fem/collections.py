@@ -6,10 +6,13 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import Sequence
 from typing import Type
-from .typing import DSLoadT, DLoadT, RLoadT
 
 import numpy as np
 from numpy.typing import NDArray
+
+from .typing import DLoadT
+from .typing import DSLoadT
+from .typing import RLoadT
 
 if TYPE_CHECKING:
     from .cell import Cell
@@ -38,25 +41,25 @@ class Map:
 
 class Field(ABC):
     @abstractmethod
-    def __call__(self, x: NDArray, time: Sequence[float]) -> Any: ...
+    def __call__(self, x: Sequence[float], time: Sequence[float]) -> Any: ...
 
 
 class ScalarField(Field):
     @abstractmethod
-    def __call__(self, x: NDArray, time: Sequence[float]) -> float: ...
+    def __call__(self, x: Sequence[float], time: Sequence[float]) -> float: ...
 
 
 class ConstantScalarField(ScalarField):
     def __init__(self, value: float) -> None:
         self.value = value
 
-    def __call__(self, x: NDArray, time: Sequence[float]) -> float:
+    def __call__(self, x: Sequence[float], time: Sequence[float]) -> float:
         return self.value
 
 
 class VectorField(Field):
     @abstractmethod
-    def __call__(self, x: NDArray, time: Sequence[float]) -> NDArray: ...
+    def __call__(self, x: Sequence[float], time: Sequence[float]) -> NDArray: ...
 
 
 class ConstantVectorField(VectorField):
@@ -65,7 +68,7 @@ class ConstantVectorField(VectorField):
         vec /= np.linalg.norm(vec)
         self.value = magnitude * vec
 
-    def __call__(self, x: NDArray, time: Sequence[float]) -> NDArray:
+    def __call__(self, x: Sequence[float], time: Sequence[float]) -> NDArray:
         return self.value
 
 
@@ -113,7 +116,7 @@ class DistributedLoad(Load):
         dt: float,
         eleno: int,
         ipt: int,
-        x: NDArray,
+        x: Sequence[float],
     ) -> NDArray:
         """
         Evaluate the load at point x and time t.
@@ -153,7 +156,7 @@ class DistributedSurfaceLoad(Load):
         eleno: int,
         sideno: int,
         ipt: int,
-        x: NDArray,
+        x: Sequence[float],
         n: NDArray,
     ) -> NDArray:
         """
@@ -212,7 +215,7 @@ class PressureLoad(DistributedSurfaceLoad):
         eleno: int,
         sideno: int,
         ipt: int,
-        x: NDArray,
+        x: Sequence[float],
         n: NDArray,
     ) -> NDArray:
         return -self.field(x, time) * n
@@ -230,7 +233,7 @@ class Solution:
 
 class RegionSelector(ABC):
     @abstractmethod
-    def __call__(self, x: NDArray, on_boundary: bool) -> bool: ...
+    def __call__(self, x: Sequence[float], on_boundary: bool) -> bool: ...
 
 
 @dataclass

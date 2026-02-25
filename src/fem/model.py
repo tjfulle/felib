@@ -26,10 +26,12 @@ class Model:
     steps: list[Step] = field(default_factory=list)
     u: NDArray = field(init=False)
     R: NDArray = field(init=False)
+    ndata: NDArray = field(init=False)
 
     def __post_init__(self) -> None:
         self.u = np.zeros((2, self.num_dof), dtype=float)
         self.R = np.zeros((2, self.num_dof), dtype=float)
+        self.ndata = np.zeros((2, self.coords.shape[0], self.coords.shape[1]), dtype=float)
 
     @property
     def nnode(self) -> int:
@@ -159,18 +161,15 @@ class Model:
 
         for i, equation in enumerate(step.equations):
             rhs = equation[-1]
-            for j in range(0, len(equation[:-1]), 3):
-                node = int(equation[j])
-                dof = int(equation[j + 1])
-                coeff = float(equation[j + 2])
-                I = self.dof_map[node, dof]
-                C[i, I] = coeff
+            for j in range(0, len(equation[:-1]), 2):
+                dof = int(equation[j])
+                coeff = float(equation[j + 1])
+                C[i, dof] = coeff
             r[i] = rhs
 
         # Gather prescribed DOFs and values
         for i, row in enumerate(C):
-            for lid, ldof, value in step.dbcs:
-                dof = self.dof_map[lid, ldof]
+            for dof, value in step.dbcs:
                 coeff = row[dof]
                 if abs(coeff) > 0.0:
                     r[i] -= coeff * (value - u[dof])

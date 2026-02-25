@@ -32,7 +32,7 @@ def exercise(esize: float = 0.05):
     mesh_builder.nodeset("Top", region=Top())
     mesh_builder.sideset("Bottom", region=Bottom())
     mesh_builder.elemset("All", region=Everywhere())
-    mesh = mesh_builder.emit_mesh()
+    mesh = mesh_builder.build()
 
     m = fem.material.LinearElastic(density=2400.0, youngs_modulus=30.0e9, poissons_ratio=0.3)
     builder = fem.builder.ModelBuilder(mesh)
@@ -41,7 +41,7 @@ def exercise(esize: float = 0.05):
     step.boundary(nodeset="Top", dofs=[X, Y], value=0.0)
     step.traction(sideset="Bottom", magnitude=500e3, direction=[4/5, -3/5])
     step.gravity(elemset="All", g=9.81, direction=[0, -1])
-    model = builder.assemble()
+    model = builder.build()
     model.solve()
     solution = model.steps[0].solution
 

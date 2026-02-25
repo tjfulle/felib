@@ -1,7 +1,9 @@
 from abc import ABC
 from abc import abstractmethod
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import Callable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -13,141 +15,76 @@ if TYPE_CHECKING:
     from .step import Step
 
 
+@dataclass
+class SolverState:
+    x: NDArray
+    residual_norm: float
+    iterations: int
+    converged: bool
+
+
 class Solver(ABC):
     @abstractmethod
-    def __call__(self, model: "Model", step: "Step") -> Solution: ...
+    def __call__(self, *args: Any, **kwargs: Any) -> Solution: ...
 
 
 class DirectSolver(Solver):
-    def __call__(self, model: "Model", step: "Step") -> Solution:
-        """Solve the 2D plane stress/strain problem"""
-        n = model.num_dof
-        m = len(step.equations)
-        u = np.zeros(n)
-        du = np.zeros(n)
-        lam = np.zeros(m)
+    """
+    Direct linear solver for a single equilibrium solve.
 
-        K: NDArray = np.zeros((n + m, n + m), dtype=float)
-        R: NDArray = np.zeros(n + m, dtype=float)
+    Solves:
 
-        time = [step.start, 0.0]
-        dt = step.period
+        K x = -R
 
-        ddofs, dvals = model.evaluate_dirichlet_bcs(step)
-        fdofs = np.array(sorted(set(range(n)).difference(ddofs)), dtype=int)
+    where K and R are already reduced or augmented
+    by the calling Step.
+    """
 
-        K[:n, :n], R[:n] = model.assemble(step, 1, time, dt, u, du)
+    def __call__(self, K: NDArray, R: NDArray) -> SolverState:  # type: ignore
+        try:
+            x = np.linalg.solve(K, -R)
+        except np.linalg.LinAlgError as e:
+            raise RuntimeError("Linear solve failed.") from e
 
-        if step.equations:
-            C, r = model.build_linear_constraint(step, u, du)
-            K[:n, n:] = C.T
-            K[n:, :n] = C
-            R[n:] = r
-
-        # Condense out Dirichlet DOFs and solve condensed system
-        delta = np.zeros(n + m)
-        delta[fdofs] = np.linalg.solve(
-            K[np.ix_(fdofs, fdofs)], -R[fdofs] - np.dot(K[np.ix_(fdofs, ddofs)], dvals)
+        return SolverState(
+            x=x, residual_norm=float(np.linalg.norm(R)), iterations=1, converged=True
         )
-
-        u[ddofs] = dvals
-        u[fdofs] += delta[fdofs]
-        if m:
-            lam = delta[n:]
-
-        react = np.zeros_like(R[:n])
-        K[:n, :n], R[:n] = model.assemble(step, 1, time, dt, u, du)
-        react[ddofs] = np.dot(K[np.ix_(ddofs, ddofs)], u[ddofs]) - R[:n][ddofs]
-
-        solution = Solution(
-            stiff=K[:n, :n],
-            force=R[:n],
-            dofs=u[:n].reshape((model.nnode, -1)),
-            react=react[:n].reshape((model.nnode, -1)),
-            lagrange_multipliers=lam,
-            iterations=1,
-        )
-        return solution
 
 
 class NonlinearNewtonSolver(Solver):
-    def __init__(self, **options: Any) -> None:
-        self.atol: float = options.get("absolute tolerance", -1.0)
-        self.rtol: float = options.get("relative tolerance", 1e-8)
-        self.maxiter: int = options.get("max iterations", 25)
-
-    def __call__(self, model: "Model", step: "Step") -> Solution:
-        n = model.num_dof
-        m = len(step.equations)
-
-        u = model.u[0, :].copy()
-        du = np.zeros_like(u, dtype=float)
-        lam = np.zeros(m, dtype=float)
-
-        K: NDArray = np.zeros((n + m, n + m), dtype=float)
-        R: NDArray = np.zeros(n + m, dtype=float)
-        R0 = 1.0
-
-        it = 0
-        time = [0.0, step.start]
-        dt = step.period
-
-        fac: float = 1.0
-        ddofs = step.ddofs
-        fdofs = np.array(sorted(set(range(model.num_dof)) - set(ddofs)))
-
-        while it < self.maxiter:
-
+    def __call__(  # type: ignore
+        self,
+        fun: Callable[..., tuple[NDArray, NDArray]],
+        x0: NDArray,
+        args: tuple = (),
+        atol: float | None = None,
+        rtol: float | None = None,
+        maxiter: int | None = None,
+    ) -> SolverState:
+        x = x0.copy()
+        R0_norm: float | None = None
+        it: int = 0
+        atol = atol or -1.0
+        rtol = rtol or 1e-8
+        maxiter = maxiter or 25
+        while it < maxiter:
             it += 1
-
-            K.fill(0.0)
-            R.fill(0.0)
-
-            K[:n, :n], R[:n] = model.assemble(step, 1, time, dt, u, du)
-
-            if step.equations:
-                C, r = model.build_linear_constraint(step, u, du)
-                K[:n, n:] = C.T
-                K[n:, :n] = C
-                R[n:] = r
-
-            if it == 1:
-                R0 = float(np.linalg.norm(R[fdofs]))
-                if self.atol < 0.0:
-                    self.atol = 1e-8 * R0
-
-            # Condense out Dirichlet DOFs and solve condensed system
-            dvals = step.dvals[0, :] + fac * (step.dvals[1, :] - step.dvals[0, :])
-            delta = np.zeros(n + m)
-            delta[fdofs] = np.linalg.solve(
-                K[np.ix_(fdofs, fdofs)],
-                -R[fdofs] - np.dot(K[np.ix_(fdofs, ddofs)], u[ddofs] - dvals),
-            )
-            du.fill(0.0)
-            du[fdofs] = delta[fdofs]
-            u += du
-            if m:
-                lam += delta[n:]
-
-            res_norm = np.linalg.norm(R[fdofs])
-            if res_norm < self.atol or res_norm / R0 < self.rtol:
+            K, R = fun(x, *args)
+            res_norm = float(np.linalg.norm(R))
+            if R0_norm is None:
+                R0_norm = res_norm if res_norm != 0.0 else 1.0
+                if atol <= 0.0:
+                    atol = 1e-8 * R0_norm
+            if res_norm < atol or res_norm / R0_norm < rtol:
                 break
-
+            try:
+                dx = np.linalg.solve(K, -R)
+            except np.linalg.LinAlgError as e:
+                raise RuntimeError(f"Linear solve failed at iteration {it}") from e
+            x += dx
         else:
-            raise RuntimeError(f"Newton iterations failed to converge after {it} iterations")
-
-        du = np.zeros_like(u)
-        K[:n, :n], R[:n] = model.assemble(step, 1, time, dt, u, du)
-
-        react = np.zeros(n)
-        react[ddofs] = np.dot(K[np.ix_(ddofs, ddofs)], u[ddofs]) - R[:n][ddofs]
-
-        solution = Solution(
-            stiff=K[:n, :n],
-            force=R[:n],
-            dofs=u[:n].reshape((model.nnode, -1)),
-            react=react.reshape((model.nnode, -1)),
-            lagrange_multipliers=lam,
-            iterations=it - 1,  # return only nonlinear iterations
-        )
-        return solution
+            raise RuntimeError(
+                f"Newton iterations failed to converge in {maxiter} iterations. "
+                f"Final residuls = {res_norm:.3e}"
+            )
+        return SolverState(x=x, residual_norm=res_norm, iterations=it - 1, converged=True)

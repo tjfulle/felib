@@ -14,6 +14,9 @@ from .material import Material
 
 
 class Element(ABC):
+    ndir: int
+    nshr: int
+
     @property
     @abstractmethod
     def nnode(self) -> int: ...
@@ -29,6 +32,10 @@ class Element(ABC):
     @property
     @abstractmethod
     def node_freedom_table(self) -> list[tuple[int, ...]]: ...
+
+    @property
+    @abstractmethod
+    def npts(self) -> int: ...
 
     @abstractmethod
     def area(self, p: NDArray) -> float: ...
@@ -57,8 +64,6 @@ class Element(ABC):
 
 
 class IsoparametricElement(Element):
-    ndir: int
-    nshr: int
     sides: NDArray
     ref_coords: NDArray
     gauss_pts: NDArray
@@ -177,7 +182,7 @@ class IsoparametricElement(Element):
             re += w * J * np.dot(B.T, s)
 
             for dload in dloads:
-                value = dload(step, increment, time, dt, eleno, ipt, x)
+                value = dload(step, increment, time, dt, eleno, ipt, x.tolist())
                 re -= w * J * np.dot(P, value)
 
         for edge_no, dsload in dsloads:
@@ -187,7 +192,7 @@ class IsoparametricElement(Element):
             for ipt, (w, xi) in enumerate(self.edge_integration_points):
                 x = self.interpolate_edge(pd, xi)
                 n = self.edge_normal(edge_no, p, xi)
-                traction = dsload(step, increment, time, dt, eleno, edge_no, ipt, x, n)
+                traction = dsload(step, increment, time, dt, eleno, edge_no, ipt, x.tolist(), n)
                 st = self.ref_edge_coords(edge_no, xi)
                 P = self.pmatrix(st)[nft]
                 J = self.edge_jacobian(edge_no, p, xi)
@@ -225,6 +230,10 @@ class CPX3(IsoparametricElement):
             (1, 1, 0, 0, 0, 0, 0, 0, 0, 0),
             (1, 1, 0, 0, 0, 0, 0, 0, 0, 0),
         ]
+
+    @property
+    def npts(self) -> int:
+        return len(self.gauss_wts)
 
     def area(self, p: NDArray) -> float:
         """Find the area of the triangle subtended by points p
