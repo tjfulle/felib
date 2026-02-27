@@ -11,76 +11,129 @@ from .collections import Map
 from .mesh import Mesh
 from .step import Step
 
+# Combined type union for array-like input
 ArrayLike = NDArray | Sequence
 
 
 @dataclass
 class Model:
+    """
+    Finite element model container class.
+
+    Holds mesh data, block definitions, degrees of freedom mappings,
+    loading steps, solution vectors, and methods for assembly and solving.
+
+    Args:
+        name: Human-readable model name.
+        mesh: Mesh object containing node coordinates and connectivity.
+        blocks: List of ElementBlock objects (one per element block).
+        num_dof: Total number of degrees of freedom in the model.
+        dof_map: Global dof mapping array.
+        block_dof_map: Array mapping block indices to dof indices.
+        node_signatures: Array storing node signature information.
+        steps: Optional list of Step objects representing analysis steps.
+    """
+
     name: str
     mesh: Mesh
     blocks: list[ElementBlock]
-
     num_dof: int
     dof_map: NDArray
     block_dof_map: NDArray
     node_signatures: NDArray
-
     steps: list[Step] = field(default_factory=list)
+
+    # Solution and residual storage
     u: NDArray = field(init=False)
     R: NDArray = field(init=False)
 
     def __post_init__(self) -> None:
+        """
+        Initialize internal solution and residual arrays.
+
+        Creates two time levels for displacements (self.u) and residuals (self.R)
+        with shape (2, num_dof). The first index holds the previous state,
+        and the second index holds the current state.
+        """
         self.u = np.zeros((2, self.num_dof), dtype=float)
         self.R = np.zeros((2, self.num_dof), dtype=float)
 
     @property
     def nnode(self) -> int:
+        """Return the number of global nodes in the mesh."""
         return self.mesh.coords.shape[0]
 
     @property
     def nelem(self) -> int:
+        """Return the number of global elements in the mesh."""
         return self.mesh.coords.shape[0]
 
     @property
     def node_map(self) -> Map:
+        """Return the global node mapping object."""
         return self.mesh.node_map
 
     @property
     def elem_map(self) -> Map:
+        """Return the global element mapping object."""
         return self.mesh.elem_map
 
     @property
     def coords(self) -> NDArray:
+        """Return global coordinates of all nodes."""
         return self.mesh.coords
 
     @property
     def connect(self) -> NDArray:
+        """Return element connectivity array."""
         return self.mesh.connect
 
     @property
     def elemsets(self) -> dict[str, list[int]]:
+        """Return element sets defined in the mesh."""
         return self.mesh.elemsets
 
     @property
     def nodesets(self) -> dict[str, list[int]]:
+        """Return node sets defined in the mesh."""
         return self.mesh.nodesets
 
     @property
     def sidesets(self) -> dict[str, list[tuple[int, int]]]:
+        """Return side sets defined in the mesh."""
         return self.mesh.sidesets
 
     @property
     def block_elem_map(self) -> dict[int, int]:
+        """Return mapping from block index to element index."""
         return self.mesh.block_elem_map
 
     def advance_state(self) -> None:
+        """
+        Advance the state from current solution to previous solution.
+
+        Copies the contents of self.u[1] -> self.u[0]
+        and self.R[1] -> self.R[0], preparing for next step.
+        """
         self.u[0, :] = self.u[1, :]
         self.R[0, :] = self.R[1, :]
 
     def add_step(self, step: Step) -> None:
+        """
+        Append a new analysis step.
+
+        Args:
+            step: A Step object representing boundary conditions, loads, and solver settings.
+        """
         self.steps.append(step)
 
     def solve(self) -> None:
+        """
+        Run through all analysis steps and solve.
+
+        For each step, triggers Step.solve(), advances state, and writes results to
+        the Exodus output file.
+        """
         file = ExodusFile(self)
         for i, step in enumerate(self.steps):
             step.solve(self)
@@ -90,8 +143,31 @@ class Model:
             file.update(i + 1, step)
 
     def assemble(
-        self, step: Step, increment: int, time: Sequence[float], dt: float, u: NDArray, du: NDArray
+        self,
+        step: Step,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        u: NDArray,
+        du: NDArray,
     ) -> tuple[NDArray, NDArray]:
+        """
+        Global matrix and residual assembly.
+
+        Calls ElementBlock.assemble() for each block, inserting into global stiffness
+        matrix and force vector.
+
+        Args:
+            step: Current analysis step.
+            increment: Sub-increment index.
+            time: Current time history.
+            dt: Time step size.
+            u: Current displacement vector.
+            du: Displacement increment vector.
+
+        Returns:
+            Tuple of (K_global, R_global)
+        """
         K = np.zeros((self.num_dof, self.num_dof), dtype=float)
         R = np.zeros(self.num_dof, dtype=float)
         for b, block in enumerate(self.blocks):
@@ -114,7 +190,20 @@ class Model:
 
 
 class ExodusFile:
+    """
+    Wrapper for Exodus II file writing.
+
+    Handles initialization, element block definitions, field variable
+    definitions, and writing of results for each time step.
+    """
+
     def __init__(self, model: Model) -> None:
+        """
+        Create and initialize the Exodus file.
+
+        Args:
+            model: Model object to write output for.
+        """
         fname = "_".join(model.name.split()) + ".exo"
         file = exodusii.exo_file(fname, mode="w")
         file.put_init(
@@ -126,10 +215,11 @@ class ExodusFile:
             num_node_sets=len(model.mesh.nodesets),
             num_side_sets=len(model.mesh.sidesets),
         )
+
+        # Write coordinate and connectivity data
         coord_names = [f"disp{'xyz'[i]}" for i in range(model.coords.shape[1])]
         file.put_coord_names(coord_names)
         file.put_coords(model.coords)
-
         file.put_map(model.elem_map.lid_to_gid)
         file.put_node_id_map(model.node_map.lid_to_gid)
 
@@ -145,7 +235,7 @@ class ExodusFile:
             file.put_element_conn(i + 1, block.connect + 1)
             file.put_element_block_name(i + 1, f"Block-{i + 1}")
 
-        # write element variable truth table
+        # Build unique list of element variable names and truth table
         elem_vars: list[str] = []
         for block in model.blocks:
             for elem_var in block.element_variable_names():
@@ -160,6 +250,7 @@ class ExodusFile:
         file.put_element_variable_names(elem_vars)
         file.put_element_variable_truth_table(truth_tab)
 
+        # Write node sets
         nodeset_id = 1
         for name, lids in model.nodesets.items():
             gids = [model.node_map[lid] for lid in lids]
@@ -168,6 +259,7 @@ class ExodusFile:
             file.put_node_set_nodes(nodeset_id, gids)
             nodeset_id += 1
 
+        # Write side sets
         sideset_id = 1
         for name, ss in model.sidesets.items():
             file.put_side_set_param(sideset_id, len(ss), 0)
@@ -177,24 +269,20 @@ class ExodusFile:
             file.put_side_set_sides(sideset_id, gids, sides)
             sideset_id += 1
 
-        # write results variables parameters and names
+        # Setup result variables
         file.put_global_variable_params(1)
         file.put_global_variable_names(["time_step"])
-
-        # Put first step
         file.put_time(1, 0.0)
-
-        # global values
         file.put_global_variable_values(1, np.zeros(1, dtype=float))
 
-        # nodal values
         file.put_node_variable_params(model.coords.shape[1])
         displ_names = [self.displ_name(i) for i in range(model.coords.shape[1])]
         file.put_node_variable_names(displ_names)
+
         for i in range(model.coords.shape[1]):
             file.put_node_variable_values(1, self.displ_name(i), model.u[0, i::2])
 
-        # element values
+        # Write initial element variable values
         for j, block in enumerate(model.blocks):
             for name, value in block.element_variable_values():
                 file.put_element_variable_values(1, j + 1, name, value)
@@ -202,21 +290,37 @@ class ExodusFile:
         self.file = file
         self.model = model
 
-        return
-
     def update(self, step_no: int, step: Step) -> None:
+        """
+        Write updated values for a new time step.
+
+        Args:
+            step_no: Index of current step.
+            step: Step object containing updated results.
+        """
         file = self.file
         model = self.model
+
         file.put_time(step_no + 1, step.start + step.period)
+
         for i in range(model.coords.shape[1]):
-            file.put_node_variable_values(step_no + 1, self.displ_name(i), model.u[0, i::2])
+            file.put_node_variable_values(
+                step_no + 1, self.displ_name(i), model.u[0, i::2]
+            )
+
         for j, block in enumerate(model.blocks):
             for name, value in block.element_variable_values():
                 file.put_element_variable_values(step_no + 1, j + 1, name, value)
 
     def displ_name(self, i: int) -> str:
+        """Generate node variable name for displacement dimension i."""
         return f"displ{'xyz'[i]}"
 
 
 def str32(string: str) -> str:
+    """
+    Format string to 32 characters for Exodus set names.
+
+    Pads or truncates to ensure 32-character width.
+    """
     return f"{string:32}"
