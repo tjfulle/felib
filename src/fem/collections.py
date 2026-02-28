@@ -239,7 +239,7 @@ class HeatSource(DistributedLoad):
     """
 
     def __init__(self, field: Field) -> None:
-        self._field = field
+        super().__init__(field=field)
 
     @property
     def field(self) -> Field:

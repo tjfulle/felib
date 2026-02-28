@@ -1,11 +1,8 @@
 import logging
-from collections import defaultdict
 from dataclasses import dataclass
 from dataclasses import field
-from typing import Any
 from typing import Sequence
 
-import exodusii
 import numpy as np
 from numpy.typing import NDArray
 
@@ -14,11 +11,7 @@ from .collections import Map
 from .element import Element
 from .material import Material
 from .mesh import Mesh
-from .step import DirectStepBuilder
-from .step import HeatTransferStepBuilder
-from .step import StaticStepBuilder
 from .step import Step
-from .step import StepBuilder
 
 # Combined type union for array-like input
 ArrayLike = NDArray | Sequence
@@ -42,7 +35,6 @@ class Model:
         num_dof: Total number of degrees of freedom in the model.
         dof_map: Global dof mapping array.
         block_dof_map: Array mapping block indices to dof indices.
-        steps: Optional list of Step objects representing analysis steps.
     """
 
     name: str
@@ -53,7 +45,6 @@ class Model:
     node_freedom_table: NDArray
     node_freedom_types: list[int]
     block_dof_map: NDArray
-    steps: list[Step] = field(default_factory=list)
 
     # Solution and residual storage
     u: NDArray = field(init=False)
@@ -129,30 +120,8 @@ class Model:
         """
         self.u[0, :] = self.u[1, :]
         self.R[0, :] = self.R[1, :]
-
-    def add_step(self, step: Step) -> None:
-        """
-        Append a new analysis step.
-
-        Args:
-            step: A Step object representing boundary conditions, loads, and solver settings.
-        """
-        self.steps.append(step)
-
-    def solve(self) -> None:
-        """
-        Run through all analysis steps and solve.
-
-        For each step, triggers Step.solve(), advances state, and writes results to
-        the Exodus output file.
-        """
-        file = ExodusFile(self)
-        for i, step in enumerate(self.steps):
-            step.solve(self)
-            self.advance_state()
-            for block in self.blocks:
-                block.advance_state()
-            file.update(i + 1, step)
+        for block in self.blocks:
+            block.advance_state()
 
     def assemble(
         self,
@@ -209,141 +178,6 @@ class Model:
         return self.block_dof_map[blockno, :n_block_dof]
 
 
-class ExodusFile:
-    """
-    Wrapper for Exodus II file writing.
-
-    Handles initialization, element block definitions, field variable
-    definitions, and writing of results for each time step.
-    """
-
-    def __init__(self, model: Model) -> None:
-        """
-        Create and initialize the Exodus file.
-
-        Args:
-            model: Model object to write output for.
-        """
-        fname = "_".join(model.name.split()) + ".exo"
-        file = exodusii.exo_file(fname, mode="w")
-        file.put_init(
-            f"fem solution for {model.name}",
-            num_dim=model.coords.shape[1],
-            num_nodes=model.coords.shape[0],
-            num_elem=model.connect.shape[0],
-            num_elem_blk=len(model.blocks),
-            num_node_sets=len(model.mesh.nodesets),
-            num_side_sets=len(model.mesh.sidesets),
-        )
-
-        # Write coordinate and connectivity data
-        coord_names = [f"disp{'xyz'[i]}" for i in range(model.coords.shape[1])]
-        file.put_coord_names(coord_names)
-        file.put_coords(model.coords)
-        file.put_map(model.elem_map.lid_to_gid)
-        file.put_node_id_map(model.node_map.lid_to_gid)
-
-        for i, block in enumerate(model.blocks):
-            file.put_element_block(
-                i + 1,
-                block.element.family,
-                num_block_elems=block.connect.shape[0],
-                num_nodes_per_elem=block.element.nnode,
-                num_faces_per_elem=1,
-                num_edges_per_elem=3,
-            )
-            file.put_element_conn(i + 1, block.connect + 1)
-            file.put_element_block_name(i + 1, f"Block-{i + 1}")
-
-        # Build unique list of element variable names and truth table
-        elem_vars: list[str] = []
-        for block in model.blocks:
-            for elem_var in block.element_variable_names():
-                if elem_var not in elem_vars:
-                    elem_vars.append(elem_var)
-        truth_tab = np.zeros((len(model.blocks), len(elem_vars)), dtype=int)
-        for i, block in enumerate(model.blocks):
-            for j, elem_var in enumerate(elem_vars):
-                if elem_var in block.element_variable_names():
-                    truth_tab[i, j] = 1
-        file.put_element_variable_params(len(elem_vars))
-        file.put_element_variable_names(elem_vars)
-        file.put_element_variable_truth_table(truth_tab)
-
-        # Write node sets
-        nodeset_id = 1
-        for name, lids in model.nodesets.items():
-            gids = [model.node_map[lid] for lid in lids]
-            file.put_node_set_param(nodeset_id, len(gids), 0)
-            file.put_node_set_name(nodeset_id, str32(name))
-            file.put_node_set_nodes(nodeset_id, gids)
-            nodeset_id += 1
-
-        # Write side sets
-        sideset_id = 1
-        #        for name, ss in model.sidesets.items():
-        #            file.put_side_set_param(sideset_id, len(ss), 0)
-        #            file.put_side_set_name(sideset_id, str32(name))
-        #            gids = [model.elem_map[_[0]] for _ in ss]
-        #            sides = [_[1] + 1 for _ in ss]
-        #            file.put_side_set_sides(sideset_id, gids, sides)
-        #            sideset_id += 1
-
-        # Setup result variables
-        file.put_global_variable_params(1)
-        file.put_global_variable_names(["time_step"])
-        file.put_time(1, 0.0)
-        file.put_global_variable_values(1, np.zeros(1, dtype=float))
-
-        file.put_node_variable_params(model.coords.shape[1])
-        displ_names = [self.displ_name(i) for i in range(model.coords.shape[1])]
-        file.put_node_variable_names(displ_names)
-
-        for i in range(model.coords.shape[1]):
-            file.put_node_variable_values(1, self.displ_name(i), model.u[0, i::2])
-
-        # Write initial element variable values
-        for j, block in enumerate(model.blocks):
-            for name, value in block.element_variable_values():
-                file.put_element_variable_values(1, j + 1, name, value)
-
-        self.file = file
-        self.model = model
-
-    def update(self, step_no: int, step: Step) -> None:
-        """
-        Write updated values for a new time step.
-
-        Args:
-            step_no: Index of current step.
-            step: Step object containing updated results.
-        """
-        file = self.file
-        model = self.model
-
-        file.put_time(step_no + 1, step.start + step.period)
-
-        for i in range(model.coords.shape[1]):
-            file.put_node_variable_values(step_no + 1, self.displ_name(i), model.u[0, i::2])
-
-        for j, block in enumerate(model.blocks):
-            for name, value in block.element_variable_values():
-                file.put_element_variable_values(step_no + 1, j + 1, name, value)
-
-    def displ_name(self, i: int) -> str:
-        """Generate node variable name for displacement dimension i."""
-        return f"displ{'xyz'[i]}"
-
-
-def str32(string: str) -> str:
-    """
-    Format string to 32 characters for Exodus set names.
-
-    Pads or truncates to ensure 32-character width.
-    """
-    return f"{string:32}"
-
-
 class ModelBuilder:
     def __init__(self, mesh: "Mesh", name: str = "Model") -> None:
         self.name = name
@@ -359,11 +193,6 @@ class ModelBuilder:
         self.dof_map: NDArray = np.empty((0, 0), dtype=int)
         self.num_dof: int = -1
 
-        # Meta data to store information needed for one pass mesh assembly
-        self.metadata: dict[str, dict] = defaultdict(dict)
-
-        self.steps: list[Step] = []
-
     def assign_properties(self, *, block: str, element: Element, material: Material) -> None:
         for blk in self.blocks:
             if blk.name == block:
@@ -375,28 +204,6 @@ class ModelBuilder:
                 break
         else:
             raise ValueError(f"Element block {block!r} is not defined")
-
-    def static_step(
-        self, name: str | None = None, period: float = 1.0, **options: Any
-    ) -> StaticStepBuilder:
-        steps = self.metadata["steps"]
-        name = name or f"step-{len(steps)}"
-        step = steps[name] = StaticStepBuilder(name=name, period=period, **options)
-        return step
-
-    def direct_step(self, name: str | None = None, period: float = 1.0) -> DirectStepBuilder:
-        steps = self.metadata["steps"]
-        name = name or f"step-{len(steps)}"
-        step = steps[name] = DirectStepBuilder(name=name, period=period)
-        return step
-
-    def heat_transfer_step(
-        self, name: str | None = None, period: float = 1.0
-    ) -> HeatTransferStepBuilder:
-        steps = self.metadata["steps"]
-        name = name or f"step-{len(steps)}"
-        step = steps[name] = HeatTransferStepBuilder(name=name, period=period)
-        return step
 
     def build(self) -> Model:
         if self.assembled:
@@ -415,12 +222,6 @@ class ModelBuilder:
             dof_map=self.dof_map,
             block_dof_map=self.block_dof_map,
         )
-        b: StepBuilder
-        parent: Step | None = None
-        for b in self.metadata.get("steps", {}).values():
-            step = b.build(model, parent=parent)
-            parent = step
-            model.add_step(step)
         self.assembled = True
         return model
 

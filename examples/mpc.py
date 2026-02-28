@@ -24,12 +24,15 @@ def mpc():
     m = fem.material.LinearElastic(density=2400.0, youngs_modulus=30.0e9, poissons_ratio=0.3)
     builder = fem.model.ModelBuilder(mesh, name="plate_with_hole")
     builder.assign_properties(block="Block-1", element=fem.element.CPS3(), material=m)
-    step = builder.static_step()
+    model = builder.build()
+
+    simulation = fem.simulation.Simulation(model)
+    step = simulation.static_step()
     step.boundary(nodes="Boundary", dofs=[X, Y], value=0.0)
     step.point_load(nodes=5, dofs=[1], value=-1e3)
     step.equation(5, X, 1.0, 5, 1, -1.0, 0.0)
-    model = builder.build()
-    model.solve()
+
+    simulation.run()
 
     u = model.u[1].reshape(model.nnode, -1)
     U = np.linalg.norm(u, axis=1)

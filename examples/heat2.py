@@ -69,17 +69,19 @@ def heat2(esize: float = 0.05):
     m = fem.material.HeatConduction(conductivity=12.0, specific_heat=1.0)
     builder = fem.model.ModelBuilder(mesh, name="heat2")
     builder.assign_properties(block="Block-1", element=fem.element.DCP3(), material=m)
-    step = builder.heat_transfer_step()
+    model = builder.build()
+
+    simulation = fem.simulation.Simulation(model)
+    step = simulation.heat_transfer_step()
     step.temperature(nodes="LHS", value=200.0)
     step.temperature(nodes="RHS", value=50.0)
     step.film(sideset="Top", h=250.0, ambient_temp=25.0)
     step.dflux(sideset="Bottom", magnitude=2000.0, direction=[0.0, 1.0])
     step.source(elements="All", field=HeatSource())
-    model = builder.build()
-    model.solve()
+    simulation.run()
     u = model.u[1]
     fem.plotting.tplot(model.coords, model.connect, u)
-    fem.plotting.rplot1(model.coords, model.steps[-1].solution.react)
+    fem.plotting.rplot1(model.coords, simulation.csteps[-1].solution.react)
 
 
 def main() -> int:

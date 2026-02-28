@@ -29,13 +29,16 @@ def exercise(esize: float = 0.05):
     builder = fem.model.ModelBuilder(mesh, name="uniaxial_stress")
     material = fem.material.LinearElastic(density=2400.0, youngs_modulus=30.0e9, poissons_ratio=0.3)
     builder.assign_properties(block="Block-1", element=fem.element.CPS3(), material=material)
-    step = builder.static_step()
+    model = builder.build()
+
+    simulation = fem.simulation.Simulation(model)
+    step = simulation.static_step()
     step.boundary(nodes="Point", dofs=[0, 1], value=0.0)
     step.boundary(nodes="Top", dofs=[1], value=0.0)
     step.traction(sideset="Bottom", magnitude=1e8, direction=[0, -1])
-    model = builder.build()
-    model.solve()
-    solution = model.steps[-1].solution
+    simulation.run()
+
+    solution = simulation.csteps[-1].solution
 
     u = solution.dofs
     U = np.linalg.norm(u, axis=1)

@@ -27,7 +27,10 @@ def mms(esize: float = 0.05):
     m = fem.material.HeatConduction(conductivity=12.0, specific_heat=1.0)
     builder = fem.model.ModelBuilder(mesh, name="heat_mms")
     builder.assign_properties(block="Block-1", element=fem.element.DCP3(), material=m)
-    step = builder.heat_transfer_step()
+    model = builder.build()
+
+    simulation = fem.simulation.Simulation(model)
+    step = simulation.heat_transfer_step()
     step.source(elements="All", field=HeatSource())
 
     T = lambda x, y: np.cos(12 * x**2) * y
@@ -37,8 +40,7 @@ def mms(esize: float = 0.05):
     for nid, x, y in p[mask]:
         step.temperature(nodes=int(nid), value=T(x, y))
 
-    model = builder.build()
-    model.solve()
+    simulation.run()
 
     u = model.u[1]
     analytic = T(model.coords[:, 0], model.coords[:, 1])

@@ -30,13 +30,16 @@ def exercise(esize: float = 0.05):
     material = fem.material.LinearElastic(density=2400.0, youngs_modulus=30.0e9, poissons_ratio=0.3)
     builder = fem.model.ModelBuilder(mesh, name="Pressure")
     builder.assign_properties(block="Block-1", element=fem.element.CPS3(), material=material)
-    step = builder.static_step()
+    model = builder.build()
+
+    simulation = fem.simulation.Simulation(model)
+    step = simulation.static_step()
     step.boundary(nodes="Top Right", dofs=[1], value=0.0)
     step.boundary(nodes="Top Left", dofs=[0, 1], value=0.0)
     step.pressure(sideset="Inside", magnitude=500e3)
-    model = builder.build()
-    model.solve()
-    solution = model.steps[0].solution
+
+    simulation.run()
+    solution = simulation.csteps[0].solution
 
     u = solution.dofs
     U = np.linalg.norm(u, axis=1)
