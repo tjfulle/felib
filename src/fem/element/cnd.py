@@ -26,6 +26,8 @@ from typing import Sequence
 import numpy as np
 from numpy.typing import NDArray
 
+from ..constants import Ux
+from ..constants import Uy
 from ..material import Material
 from .geom import P3
 from .geom import P4
@@ -71,6 +73,7 @@ class CnD:
         dt: float,
         eleno: int,
         p: NDArray,
+        u: NDArray,
         e: NDArray,
         de: NDArray,
         hsv: NDArray,
@@ -97,6 +100,8 @@ class CnD:
             Element index.
         p
             Nodal coordinate array.
+        u
+            Current nodal displacement
         e
             Current strain state.
         de
@@ -137,11 +142,7 @@ class CPX3(P3, CnD, IsoparametricElement):
         -------
         List of tuples mapping node DOFs (u,v, other reserved slots).
         """
-        return [
-            (1, 1, 0, 0, 0, 0, 0, 0, 0, 0),
-            (1, 1, 0, 0, 0, 0, 0, 0, 0, 0),
-            (1, 1, 0, 0, 0, 0, 0, 0, 0, 0),
-        ]
+        return [(Ux, Uy), (Ux, Uy), (Ux, Uy)]
 
     def pmatrix(self, xi: NDArray) -> NDArray:
         """
@@ -245,12 +246,7 @@ class CPX4(P4, CnD, IsoparametricElement):
 
     @property
     def node_freedom_table(self) -> list[tuple[int, ...]]:
-        return [
-            (1, 1, 0, 0, 0, 0, 0, 0, 0, 0),
-            (1, 1, 0, 0, 0, 0, 0, 0, 0, 0),
-            (1, 1, 0, 0, 0, 0, 0, 0, 0, 0),
-            (1, 1, 0, 0, 0, 0, 0, 0, 0, 0),
-        ]
+        return [(Ux, Uy), (Ux, Uy), (Ux, Uy), (Ux, Uy)]
 
     def pmatrix(self, xi: NDArray) -> NDArray:
         N = self.shape(xi)

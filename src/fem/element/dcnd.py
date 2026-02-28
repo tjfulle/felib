@@ -8,11 +8,14 @@ not nodal temperature.
 """
 
 from typing import Sequence
+
 import numpy as np
 from numpy.typing import NDArray
 
+from ..constants import T
 from ..material import Material
-from .geom import P3, P4
+from .geom import P3
+from .geom import P4
 from .isop import IsoparametricElement
 
 
@@ -37,8 +40,9 @@ class DCnD:
         dt: float,
         eleno: int,
         p: NDArray,
-        T: NDArray,
-        dT: NDArray,
+        u: NDArray,
+        e: NDArray,
+        de: NDArray,
         hsv: NDArray,
     ) -> tuple[NDArray, NDArray]:
         """
@@ -58,10 +62,12 @@ class DCnD:
             Element number.
         p : NDArray
             Nodal coordinates.
-        T : NDArray
-            Current nodal temperatures.
-        dT : NDArray
-            Temperature increment (unused here).
+        u
+            Current nodal temperature
+        e : NDArray
+            Temperature gradient
+        de : NDArray
+            Temperature increment gradient
         hsv : NDArray
             Element history variable array to store flux or energy.
 
@@ -72,9 +78,10 @@ class DCnD:
         q : NDArray
             Element internal flux vector.
         """
-        K, q = material.eval(T)
+        ndim = p.shape[1]
+        D, q = material.eval(e, ndir=ndim, nshr=0)
         hsv[:] = q  # store element flux or internal quantities
-        return K, q
+        return D, q
 
 
 class DCP3(P3, DCnD, IsoparametricElement):
@@ -87,22 +94,25 @@ class DCP3(P3, DCnD, IsoparametricElement):
 
     @property
     def node_freedom_table(self) -> list[tuple[int, ...]]:
-        """
-        Node freedom table of length 10.
-        Temperature DOF at literal index 3 (4th entry).
-        """
-        return [
-            (0, 0, 0, 1, 0, 0, 0, 0, 0, 0),
-            (0, 0, 0, 1, 0, 0, 0, 0, 0, 0),
-            (0, 0, 0, 1, 0, 0, 0, 0, 0, 0),
-        ]
+        """Node freedom table Temperature DOF at 4th entry."""
+        return [(T,), (T,), (T,)]
 
     def pmatrix(self, xi: NDArray) -> NDArray:
         """Interpolation matrix for temperature DOF."""
         N = self.shape(xi)
-        P = np.zeros((1, 3))
-        P[0, :] = N
+        P = np.zeros((3, 1))
+        P[:, 0] = N
         return P
+
+    def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
+        dNdx = self.shape_gradient(p, xi)
+        B = np.zeros((2, 3))
+        B[0] = dNdx[0]
+        B[1] = dNdx[1]
+        return B
+
+    def history_variables(self) -> list[str]:
+        return ["q_x", "q_y"]
 
 
 class DCP4(P4, DCnD, IsoparametricElement):
@@ -115,28 +125,22 @@ class DCP4(P4, DCnD, IsoparametricElement):
 
     @property
     def node_freedom_table(self) -> list[tuple[int, ...]]:
-        """Node freedom table of length 10, temperature at index 3."""
-        return [
-            (0, 0, 0, 1, 0, 0, 0, 0, 0, 0),
-            (0, 0, 0, 1, 0, 0, 0, 0, 0, 0),
-            (0, 0, 0, 1, 0, 0, 0, 0, 0, 0),
-            (0, 0, 0, 1, 0, 0, 0, 0, 0, 0),
-        ]
+        """Node freedom table.  Temperature DOF at 4th entry."""
+        return [(T,), (T,), (T,), (T,)]
 
     def pmatrix(self, xi: NDArray) -> NDArray:
         """Interpolation matrix for temperature DOF."""
         N = self.shape(xi)
-        P = np.zeros((1, 4))
-        P[0, :] = N
+        P = np.zeros((4, 1))
+        P[:, 0] = N
         return P
 
+    def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
+        dNdx = self.shape_gradient(p, xi)
+        B = np.zeros((2, 4))
+        B[0] = dNdx[0]
+        B[1] = dNdx[1]
+        return B
 
-# Element-level quantities (history variables) for internal flux
-class DCP3Flux(DCP3):
-    def history_variables(self) -> list[str]:
-        return ["q_x", "q_y"]
-
-
-class DCP4Flux(DCP4):
     def history_variables(self) -> list[str]:
         return ["q_x", "q_y"]

@@ -6,13 +6,12 @@ from typing import Any
 from typing import Generator
 from typing import Sequence
 
-import numpy as np
 from numpy.typing import NDArray
 
+from ..collections import DistributedLoad
+from ..collections import DistributedSurfaceLoad
+from ..collections import RobinLoad
 from ..material import Material
-from ..loads import DistributedLoad
-from ..loads import DistributedSurfaceLoad
-from ..loads import RobinLoad
 
 
 class Element(ABC):
@@ -111,6 +110,7 @@ class Element(ABC):
         dt: float,
         eleno: int,
         p: NDArray,
+        u: NDArray,
         e: NDArray,
         de: NDArray,
         hsv: NDArray,
@@ -126,6 +126,7 @@ class Element(ABC):
             dt: Time increment.
             eleno: Element number.
             p: Element nodal coordinates.
+            e: Nodal dof values.
             e: Current strain.
             de: Strain rate.
             hsv: History variable array for this integration point.

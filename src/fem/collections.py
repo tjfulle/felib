@@ -221,6 +221,56 @@ class PressureLoad(DistributedSurfaceLoad):
         return -self.field(x, time) * n
 
 
+class HeatSource(Load):
+    """
+    Mass-proportional body force.
+    """
+
+    def __init__(self, field: Field) -> None:
+        self._field = field
+
+    @property
+    def field(self) -> Field:
+        return self._field
+
+    def __call__(
+        self,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        ipt: int,
+        x: Sequence[float],
+    ) -> NDArray:
+        return np.array([self.field(x, time)])
+
+
+class HeatFlux(DistributedSurfaceLoad):
+    """
+    Heat flux applied on element surfaces.
+    """
+
+    def __init__(self, magnitude: float, direction: Sequence[float]) -> None:
+        field = ConstantVectorField(magnitude, direction)
+        super().__init__(field=field)
+
+    def __call__(
+        self,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        sideno: int,
+        ipt: int,
+        x: Sequence[float],
+        n: NDArray,
+    ) -> NDArray:
+        # return -np.array([np.dot(self.field(x, time), n)])
+        return -np.array([np.dot(self.field(x, time), n)])
+
+
 @dataclass
 class Solution:
     stiff: NDArray

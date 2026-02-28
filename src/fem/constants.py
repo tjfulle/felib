@@ -2,6 +2,14 @@ X = 0
 Y = 1
 Z = 2
 
+Ux = 0
+Uy = 1
+Uz = 2
+Rx = 3
+Ry = 4
+Rz = 5
+T = 6
+
 DIRICHLET = 10
 NEUMANN = 11
 

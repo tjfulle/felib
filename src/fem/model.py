@@ -30,7 +30,6 @@ class Model:
         num_dof: Total number of degrees of freedom in the model.
         dof_map: Global dof mapping array.
         block_dof_map: Array mapping block indices to dof indices.
-        node_signatures: Array storing node signature information.
         steps: Optional list of Step objects representing analysis steps.
     """
 
@@ -39,8 +38,9 @@ class Model:
     blocks: list[ElementBlock]
     num_dof: int
     dof_map: NDArray
+    node_freedom_table: NDArray
+    node_freedom_types: NDArray
     block_dof_map: NDArray
-    node_signatures: NDArray
     steps: list[Step] = field(default_factory=list)
 
     # Solution and residual storage
@@ -171,8 +171,7 @@ class Model:
         K = np.zeros((self.num_dof, self.num_dof), dtype=float)
         R = np.zeros(self.num_dof, dtype=float)
         for b, block in enumerate(self.blocks):
-            ix = self.block_dof_map[b]
-            bft = ix[ix != -1]
+            bft = self.block_freedom_table(b)
             kb, rb = block.assemble(
                 step.number,
                 increment,
@@ -187,6 +186,15 @@ class Model:
             K[np.ix_(bft, bft)] += kb
             R[bft] += rb
         return K, R
+
+    def block_freedom_table(self, blockno: int) -> NDArray:
+        """
+        Return the compact global DOFs for the entire block.
+        """
+        dof_per_node = self.blocks[blockno].element.dof_per_node
+        nnode = self.blocks[blockno].num_nodes
+        n_block_dof = nnode * dof_per_node
+        return self.block_dof_map[blockno, :n_block_dof]
 
 
 class ExodusFile:
@@ -261,13 +269,13 @@ class ExodusFile:
 
         # Write side sets
         sideset_id = 1
-        for name, ss in model.sidesets.items():
-            file.put_side_set_param(sideset_id, len(ss), 0)
-            file.put_side_set_name(sideset_id, str32(name))
-            gids = [model.elem_map[_[0]] for _ in ss]
-            sides = [_[1] + 1 for _ in ss]
-            file.put_side_set_sides(sideset_id, gids, sides)
-            sideset_id += 1
+        #        for name, ss in model.sidesets.items():
+        #            file.put_side_set_param(sideset_id, len(ss), 0)
+        #            file.put_side_set_name(sideset_id, str32(name))
+        #            gids = [model.elem_map[_[0]] for _ in ss]
+        #            sides = [_[1] + 1 for _ in ss]
+        #            file.put_side_set_sides(sideset_id, gids, sides)
+        #            sideset_id += 1
 
         # Setup result variables
         file.put_global_variable_params(1)
@@ -304,9 +312,7 @@ class ExodusFile:
         file.put_time(step_no + 1, step.start + step.period)
 
         for i in range(model.coords.shape[1]):
-            file.put_node_variable_values(
-                step_no + 1, self.displ_name(i), model.u[0, i::2]
-            )
+            file.put_node_variable_values(step_no + 1, self.displ_name(i), model.u[0, i::2])
 
         for j, block in enumerate(model.blocks):
             for name, value in block.element_variable_values():

@@ -108,22 +108,14 @@ class DirectStep(Step):
         # For linear step, incremental displacement is irrelevant.
         # We solve directly for total displacement.
         model.u[1, :] = model.u[0, :]
+        model.u[1, ddofs] = dvals
         K, R = model.assemble(self, 1, [0.0, self.start], self.period, model.u[1], np.zeros(n))
         for dof, value in self.nbcs:
             R[dof] -= value
 
-        # Enforce Dirichlet DOFs strongly
-        u = model.u[1].copy()
-        u[ddofs] = dvals
-
-        # Modify RHS for prescribed values:
-        # R_f = R_f + K_fd * u_d
-        R_mod = R.copy()
-        R_mod -= np.dot(K, u)
-
         # Reduced free system
         K_ff = K[np.ix_(fdofs, fdofs)]
-        R_f = R_mod[fdofs]
+        R_f = R[fdofs]
 
         state: "SolverState"
         solver = DirectSolver()
@@ -135,7 +127,7 @@ class DirectStep(Step):
             # ------------------------------------------
             C, r = build_linear_constraint(model.num_dof, self.equations)
             C_f = C[:, fdofs]
-            g = np.dot(C, u) - r
+            g = np.dot(C, model.u[1]) - r
             Ka = np.block([[K_ff, C_f.T], [C_f, np.zeros((neq, neq))]])
             Ra = np.hstack([R_f, g])
             state = solver(Ka, Ra)
@@ -143,9 +135,7 @@ class DirectStep(Step):
         # -------------------------------------------------
         # Construct final displacement
         # -------------------------------------------------
-
-        model.u[1, fdofs] = state.x[:nf]
-        model.u[1, ddofs] = dvals
+        model.u[1, fdofs] += state.x[:nf]
 
         # Reassemble to compute reactions
         K, R = model.assemble(self, 1, [0.0, self.start], self.period, model.u[1], np.zeros(n))
@@ -383,3 +373,15 @@ def build_linear_constraint(n: int, equations: list[list]) -> tuple[NDArray, NDA
         r[i] = rhs
 
     return C, r
+
+
+@dataclass
+class HeatTransferStep(DirectStep):
+    """
+    Single linear static step.
+
+    Performs one global assembly and a single linear solve.
+    No Newton iteration is performed.
+    """
+
+    ...

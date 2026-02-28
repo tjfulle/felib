@@ -1,5 +1,7 @@
 from abc import abstractmethod
-from typing import Any, Generator, Sequence
+from typing import Any
+from typing import Generator
+from typing import Sequence
 
 import numpy as np
 from numpy.typing import NDArray
@@ -34,7 +36,6 @@ class IsoparametricElement(Element):
     # Integration point accessors
     # —————————————————————————————————————————————————————————————
 
-    @property
     def integration_points(self) -> Generator[tuple[Any, Any], None, None]:
         """
         Yield integration weights and local coordinates.
@@ -44,7 +45,6 @@ class IsoparametricElement(Element):
         """
         yield from zip(self.gauss_wts, self.gauss_pts)
 
-    @property
     def edge_integration_points(self) -> Generator[tuple[Any, Any], None, None]:
         """
         Yield edge integration weights and local 1D coordinates.
@@ -66,7 +66,7 @@ class IsoparametricElement(Element):
         Returns:
             Integer number of DOFs per node.
         """
-        return max([sum(_) for _ in self.node_freedom_table])
+        return max([len(_) for _ in self.node_freedom_table])
 
     @property
     def dimensions(self) -> int:
@@ -305,6 +305,7 @@ class IsoparametricElement(Element):
         dt: float,
         eleno: int,
         p: NDArray,
+        u: NDArray,
         e: NDArray,
         de: NDArray,
         hsv: NDArray,
@@ -320,6 +321,7 @@ class IsoparametricElement(Element):
             dt: Time delta
             eleno: Element number
             p: Physical coordinates
+            e: Displacement
             e: Strain
             de: Strain rate
             hsv: State memory array
@@ -385,7 +387,7 @@ class IsoparametricElement(Element):
         ke = np.zeros((ndof, ndof))
 
         # ————————————————— Volume integration —————————————————
-        for ipt, (w, xi) in enumerate(self.integration_points):
+        for ipt, (w, xi) in enumerate(self.integration_points()):
             J = self.jacobian(p, xi)
             B = self.bmatrix(p, xi)
             P = self.pmatrix(xi)
@@ -395,7 +397,7 @@ class IsoparametricElement(Element):
             e = np.dot(B, u)
             de = np.dot(B, du) / dt
             D, s = self.update_state(
-                material, step, increment, time, dt, eleno, p, e, de, pdata[ipt]
+                material, step, increment, time, dt, eleno, p, u, e, de, pdata[ipt]
             )
             ke += w * J * np.dot(np.dot(B.T, D), B)
             re += w * J * np.dot(B.T, s)
@@ -410,7 +412,7 @@ class IsoparametricElement(Element):
             nodes = self.edges[edge_no]
             pd = p[nodes]
             nft = [self.dof_per_node * n + d for n in nodes for d in range(self.dof_per_node)]
-            for ipt, (w, xi) in enumerate(self.edge_integration_points):
+            for ipt, (w, xi) in enumerate(self.edge_integration_points()):
                 x = self.interpolate_edge(edge_no, pd, xi)
                 n = self.edge_normal(edge_no, p, xi)
                 traction = dsload(step, increment, time, dt, eleno, edge_no, ipt, x.tolist(), n)
@@ -425,7 +427,7 @@ class IsoparametricElement(Element):
             nft = [self.dof_per_node * n + d for n in nodes for d in range(self.dof_per_node)]
             H = np.asarray(rload.H)
             u0 = np.asarray(rload.u0)
-            for ipt, (w, xi) in enumerate(self.edge_integration_points):
+            for ipt, (w, xi) in enumerate(self.edge_integration_points()):
                 st = self.ref_edge_coords(rload.edge, xi)
                 P = self.pmatrix(st)[nft]
                 J = self.edge_jacobian(rload.edge, p, xi)

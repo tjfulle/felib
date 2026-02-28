@@ -7,6 +7,9 @@ from numpy.typing import NDArray
 if TYPE_CHECKING:
     from .collections import DistributedLoad
     from .collections import DistributedSurfaceLoad
+    from .collections import Film
+    from .collections import HeatSource
+    from .collections import NormalHeatFlux
     from .collections import RobinLoad
 
 RegionSelector = Callable[[Sequence[float], bool], bool]
@@ -16,3 +19,7 @@ NodeFunction = Callable[[int, int, int, int, NDArray, list[float], float], float
 DSLoadT = dict[int, dict[int, list[tuple[int, "DistributedSurfaceLoad"]]]]
 RLoadT = dict[int, dict[int, list["RobinLoad"]]]
 DLoadT = dict[int, dict[int, list["DistributedLoad"]]]
+
+QLoadT = dict[int, dict[int, list[tuple[int, "NormalHeatFlux"]]]]
+FLoadT = dict[int, dict[int, list["Film"]]]
+HLoadT = dict[int, dict[int, list["HeatSource"]]]

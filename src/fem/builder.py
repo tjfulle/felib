@@ -17,6 +17,8 @@ from .collections import DistributedLoad
 from .collections import DistributedSurfaceLoad
 from .collections import Field
 from .collections import GravityLoad
+from .collections import HeatFlux
+from .collections import HeatSource
 from .collections import PressureLoad
 from .collections import RobinLoad
 from .collections import TractionLoad
@@ -25,10 +27,13 @@ from .material import Material
 from .mesh import Mesh
 from .model import Model
 from .step import DirectStep
+from .step import HeatTransferStep
 from .step import StaticStep
 from .step import Step
 from .typing import DLoadT
 from .typing import DSLoadT
+from .typing import HLoadT
+from .typing import QLoadT
 from .typing import RegionSelector
 from .typing import RLoadT
 
@@ -309,7 +314,8 @@ class StaticStepBuilder(StepBuilder):
 
     def traction(self, *, sideset: str, magnitude: float, direction: Sequence[float]) -> None:
         dsloads = self.metadata["dsloads"]
-        dsloads[f"dsload-{len(dsloads)}"] = ("traction", sideset, magnitude, direction)
+        dir = normalize(direction)
+        dsloads[f"dsload-{len(dsloads)}"] = ("traction", sideset, magnitude, dir)
 
     def pressure(self, *, sideset: str, magnitude: float) -> None:
         dsloads = self.metadata["dsloads"]
@@ -317,7 +323,8 @@ class StaticStepBuilder(StepBuilder):
 
     def gravity(self, *, elemset: str, g: float, direction: Sequence[float]) -> None:
         dloads = self.metadata["dloads"]
-        dloads[f"dload-{len(dloads)}"] = ("gravity", elemset, g, direction)
+        dir = normalize(direction)
+        dloads[f"dload-{len(dloads)}"] = ("gravity", elemset, g, dir)
 
     def dload(self, *, elemset: str, field: Field) -> None:
         dloads = self.metadata["dloads"]
@@ -435,13 +442,11 @@ class StaticStepBuilder(StepBuilder):
         H: NDArray
         u0: NDArray
         for sideset, H, u0 in self.metadata.get("rloads", {}).values():
+            if sideset not in model.sidesets:
+                raise ValueError(f"side set {sideset} not defined")
             for ele_no, edge_no in model.sidesets[sideset]:
                 block_no = model.block_elem_map[ele_no]
                 block = model.mesh.blocks[block_no]
-                conn = model.connect[ele_no]
-                p = model.coords[conn]
-                x = block.cell_type.edge_centroid(edge_no, p)
-
                 gid = block.elem_map[ele_no]
                 lid = block.elem_map.local(gid)
                 rload = RobinLoad(edge=edge_no, H=H, u0=u0)
@@ -488,6 +493,175 @@ class DirectStepBuilder(StaticStepBuilder):
         )
 
 
+class HeatTransferStepBuilder(StepBuilder):
+    def __init__(self, name: str, period: float = 1.0) -> None:
+        super().__init__(name=name, period=period)
+        self.dbcs: list[tuple[int, float]] = []
+        self.nbcs: list[tuple[int, float]] = []
+        self.dsloads: QLoadT = defaultdict(lambda: defaultdict(list))
+        self.rloads: RLoadT = defaultdict(lambda: defaultdict(list))
+        self.dloads: HLoadT = defaultdict(lambda: defaultdict(list))
+        self.mpcs: list[list[int | float]] = []
+
+    def temperature(self, *, nodes: str | int | list[int], value: float = 0.0) -> None:
+        dofs = [0]
+        dbcs = self.metadata["dbcs"]
+        dbcs[f"dbc-{len(dbcs)}"] = (nodes, dofs, value)
+
+    def dflux(self, *, sideset: str, magnitude: float, direction: Sequence[float]) -> None:
+        dsloads = self.metadata["dsloads"]
+        dir = normalize(direction)
+        dsloads[f"dsload-{len(dsloads)}"] = ("flux", sideset, magnitude, dir)
+
+    def source(self, *, elements: str | int | list[int], field: Field) -> None:
+        dloads = self.metadata["dloads"]
+        dloads[f"dload-{len(dloads)}"] = ("dload", elements, field)
+
+    def film(self, *, sideset: str, h: float, ambient_temp: float) -> None:
+        rloads = self.metadata["rloads"]
+        rloads[f"rload-{len(rloads)}"] = (sideset, h, ambient_temp)
+
+    def equation(self, *args: int | float) -> None:
+        if len(args) < 4:
+            raise ValueError("Equation at least one (node, dof, coeff) triple and rhs")
+        if (len(args) - 1) % 3 != 0:
+            raise ValueError("Equation must be (node, dof, coeff), ..., rhs")
+        constraints = self.metadata["constraints"]
+        triples = args[:-1]
+        rhs = args[-1]
+        nodes: list[int] = []
+        dofs: list[int] = []
+        coeffs: list[float] = []
+        for i in range(0, len(triples), 3):
+            nodes.append(int(triples[i]))
+            dofs.append(int(triples[i + 1]))
+            coeffs.append(float(triples[i + 2]))
+        constraints[f"constraint-{len(constraints)}"] = (nodes, dofs, coeffs, rhs)
+
+    def build(self, model: Model, parent: Step | None) -> StaticStep:
+        self.construct_dbcs(model)
+        self.construct_nbcs(model)
+        self.construct_dloads(model)
+        self.construct_dsloads(model)
+        self.construct_rloads(model)
+        self.construct_constraints(model)
+        return HeatTransferStep(
+            name=self.name,
+            parent=parent,
+            period=self.period,
+            dbcs=self.dbcs,
+            nbcs=self.nbcs,
+            dsloads=self.dsloads,
+            dloads=self.dloads,
+            rloads=self.rloads,
+            equations=self.mpcs,
+        )
+
+    def construct_dbcs(self, model: Model) -> None:
+        seen: dict[int, float] = {}
+        for nodes, dofs, value in self.metadata.get("dbcs", {}).values():
+            lids: list[int]
+            if isinstance(nodes, str):
+                if nodes not in model.nodesets:
+                    raise ValueError(f"nodeset {nodes} not defined")
+                lids = model.nodesets[nodes]
+            elif isinstance(nodes, int):
+                lids = [model.node_map.local(nodes)]
+            else:
+                lids = [model.node_map.local(gid) for gid in nodes]
+            for lid in lids:
+                for dof in dofs:
+                    DOF = model.dof_map[lid, dof]
+                    seen[DOF] = value
+        self.dbcs = [(k, seen[k]) for k in sorted(seen)]
+
+    def construct_nbcs(self, model: Model) -> None:
+        seen: dict[int, float] = defaultdict(float)
+        for nodeset, dofs, value in self.metadata.get("nbcs", {}).values():
+            if nodeset not in model.nodesets:
+                raise ValueError(f"nodeset {nodeset} not defined")
+            lids: list[int] = model.nodesets[nodeset]
+            for lid in lids:
+                for dof in dofs:
+                    DOF = model.dof_map[lid, dof]
+                    seen[DOF] += value
+        self.nbcs = [(k, seen[k]) for k in sorted(seen)]
+
+    def construct_dloads(self, model: Model) -> None:
+        dload: DistributedLoad
+        for ltype, elements, *args in self.metadata.get("dloads", {}).values():
+            lids: list[int]
+            if isinstance(elements, str):
+                if elements not in model.elemsets:
+                    raise ValueError(f"element set {elements} not defined")
+                lids = model.elemsets[elements]
+            elif isinstance(elements, int):
+                lids = model.elem_map.local(elements)
+            else:
+                lids = [model.elem_map.local(gid) for gid in elements]
+            if ltype == "dload":
+                field = args[0]
+                dload = HeatSource(field=field)
+            else:
+                raise ValueError(f"Unknown ltype: {ltype}")
+            for lid in lids:
+                gid = model.elem_map[lid]
+                block_no = model.block_elem_map[lid]
+                block = model.blocks[block_no]
+                if ltype == "gravity":
+                    g, direction = args
+                    dload = GravityLoad(block.material.density * g, direction)
+                e = block.elem_map.local(gid)
+                self.dloads[block_no][e].append(dload)
+
+    def construct_dsloads(self, model: Model) -> None:
+        dsload: DistributedSurfaceLoad
+        for ltype, sideset, *args in self.metadata.get("dsloads", {}).values():
+            if sideset not in model.sidesets:
+                raise ValueError(f"side set {sideset} not defined")
+            if ltype == "flux":
+                dsload = HeatFlux(magnitude=args[0], direction=args[1])
+            else:
+                raise ValueError(f"Unknown ltype: {ltype}")
+            for elem_no, edge_no in model.sidesets[sideset]:
+                block_no = model.block_elem_map[elem_no]
+                block = model.blocks[block_no]
+                gid = model.elem_map[elem_no]
+                lid = block.elem_map.local(gid)
+                self.dsloads[block_no][lid].append((edge_no, dsload))
+
+    def construct_rloads(self, model: Model) -> None:
+        sideset: str
+        H: float
+        u0: float
+        for sideset, H, u0 in self.metadata.get("rloads", {}).values():
+            if sideset not in model.sidesets:
+                raise ValueError(f"side set {sideset} not defined")
+            for ele_no, edge_no in model.sidesets[sideset]:
+                block_no = model.block_elem_map[ele_no]
+                block = model.mesh.blocks[block_no]
+                gid = block.elem_map[ele_no]
+                lid = block.elem_map.local(gid)
+                rload = RobinLoad(edge=edge_no, H=np.array([[H]]), u0=np.array([u0]))
+                self.rloads[block_no][lid].append(rload)
+
+    def construct_constraints(self, model: Model) -> None:
+        nodes: list[int]
+        dofs: list[int]
+        coeffs: list[float]
+        rhs: float = 0.0
+        for nodes, dofs, coeffs, rhs in self.metadata.get("constraints", {}).values():
+            mpc: list[int | float] = []
+            for gid, dof, coeff in zip(nodes, dofs, coeffs):
+                if gid not in model.node_map:
+                    raise ValueError(f"Node {gid} is not defined")
+                lid = model.node_map.local(gid)
+                DOF = model.dof_map[lid, dof]
+                mpc.extend([DOF, coeff])
+            mpc.append(rhs)
+            self.mpcs.append(mpc)
+
+
 class ModelBuilder:
     def __init__(self, mesh: "Mesh", name: str = "Model") -> None:
         self.name = name
@@ -497,8 +671,11 @@ class ModelBuilder:
         self.blocks: list[ElementBlock] = []
 
         # dof_map[node, dof] -> global (model) dof
+        self.node_freedom_table: NDArray = np.empty((0, 0), dtype=int)
+        self.node_freedom_types: list[int] = []
+        self.block_dof_map: NDArray = np.empty((0, 0), dtype=int)
         self.dof_map: NDArray = np.empty((0, 0), dtype=int)
-        self.node_signatures: NDArray = np.empty((0, 0), dtype=int)
+        self.num_dof: int = -1
 
         # Meta data to store information needed for one pass mesh assembly
         self.metadata: dict[str, dict] = defaultdict(dict)
@@ -531,6 +708,14 @@ class ModelBuilder:
         step = steps[name] = DirectStepBuilder(name=name, period=period)
         return step
 
+    def heat_transfer_step(
+        self, name: str | None = None, period: float = 1.0
+    ) -> HeatTransferStepBuilder:
+        steps = self.metadata["steps"]
+        name = name or f"step-{len(steps)}"
+        step = steps[name] = HeatTransferStepBuilder(name=name, period=period)
+        return step
+
     def build(self) -> Model:
         if self.assembled:
             raise ValueError("ModelBuilder already assembled")
@@ -543,9 +728,10 @@ class ModelBuilder:
             mesh=self.mesh,
             blocks=self.blocks,
             num_dof=self.num_dof,
+            node_freedom_table=self.node_freedom_table,
+            node_freedom_types=self.node_freedom_types,
             dof_map=self.dof_map,
             block_dof_map=self.block_dof_map,
-            node_signatures=self.node_signatures,
         )
         b: StepBuilder
         parent: Step | None = None
@@ -556,51 +742,117 @@ class ModelBuilder:
         self.assembled = True
         return model
 
-    def build_dof_maps(self) -> None:
-        # Build node signatures and dof maps
-        num_node: int = self.mesh.coords.shape[0]
-        max_dof_per_node = max([b.element.dof_per_node for b in self.blocks])
-        # FIX ME: compress out dofs not used at all
-        max_dof_per_node = max(max_dof_per_node, 10)
-        self.node_signatures = np.zeros((num_node, max_dof_per_node), dtype=int)
-        for b, block in enumerate(self.blocks):
-            node_freedoms = np.asarray(block.element.node_freedom_table, dtype=int)
-            for nodes in block.connect:
-                # Map block local node number to model node number
-                ix = []
-                for node in nodes:
-                    gid = block.node_map[node]
+    def build_node_freedom_table(self) -> None:
+        """
+        Build the model-level node freedom table.
+
+        Produces:
+            self.node_freedom_table : ndarray[int] of shape (nnode, n_active_dofs)
+                1 if the DOF is active at the node, 0 otherwise
+            self.node_freedom_types : ndarray[int] of length n_active_dofs
+                Physical DOF type corresponding to each column (Ux, Uy, ..., T)
+            self.num_dof : int
+                Total number of active DOFs in the model
+        """
+
+        # -----------------------------
+        # 1) Determine max DOF index used across all blocks
+        # -----------------------------
+        max_dof_idx = -1
+        for block in self.blocks:
+            for node_dofs in block.element.node_freedom_table:
+                max_dof_idx = max(max_dof_idx, max(node_dofs))
+        ncol = max_dof_idx + 1  # number of physical DOF types used
+
+        nnode = self.mesh.coords.shape[0]
+
+        # -----------------------------
+        # 2) Build full node signature (nnode x ncol)
+        # -----------------------------
+        node_sig_full = np.zeros((nnode, ncol), dtype=int)
+
+        for block in self.blocks:
+            for elem_nodes in block.connect:
+                for i, block_node in enumerate(elem_nodes):
+                    gid = block.node_map[block_node]
                     lid = self.mesh.node_map.local(gid)
-                    ix.append(lid)
-                self.node_signatures[ix, :] |= node_freedoms
+                    for col in block.element.node_freedom_table[i]:
+                        node_sig_full[lid, col] = 1
 
-        # Check for dummy nodes that are not included in element connectivity
-        # All dummy nodes must have associated Dirichlet BCs.  We can use the BC to fill in the node
-        # signature
-        # for bc in self.bcs:
-        #    self.node_signatures[bc["nodes"], bc["local_dof"]] |= 1
-        if np.any(self.node_signatures.sum(axis=1) == 0):
-            missing = np.where(self.node_signatures.sum(axis=1) == 0)[0]
-            raise ValueError(f"Dummy node without Dirichlet BC: {missing.tolist()}")
+        # -----------------------------
+        # 3) Identify active columns
+        # -----------------------------
+        active_cols = np.where(node_sig_full.sum(axis=0) > 0)[0]
 
-        active_mask: NDArray = self.node_signatures == 1
-        self.num_dof: int = int(active_mask.sum())
+        # -----------------------------
+        # 4) Compress node signature and store
+        # -----------------------------
+        self.node_freedom_table = node_sig_full[:, active_cols].copy()
+        self.node_freedom_types = active_cols.tolist()
+        self.num_dof = int(self.node_freedom_table.sum())
 
-        mask = active_mask.ravel()
-        map = -np.ones_like(mask, dtype=int)
-        map[mask] = np.arange(self.num_dof)
-        self.dof_map = map.reshape(self.node_signatures.shape).copy()
+    def build_dof_map(self) -> None:
+        """
+        Build global DOF numbering for the model.
 
-        # Create map
-        # DOF = block_dof_map[b, dof] is the global model DOF for dof of block b
-        m = max([block.num_dof for block in self.blocks])
-        self.block_dof_map = -np.ones((len(self.blocks), m), dtype=int)
-        for b, block in enumerate(self.blocks):
-            nodes = np.unique(block.connect)
-            for node in nodes:
-                gid = block.node_map[node]
+        Produces:
+            self.dof_map: ndarray[int] of shape (nnode, n_active_dofs)
+                Maps (node, local DOF index in node_freedom_table) -> global DOF index
+        """
+        nnode, n_active = self.node_freedom_table.shape
+        self.dof_map = -np.ones((nnode, n_active), dtype=int)
+
+        # Flatten node_freedom_table
+        flat_mask = self.node_freedom_table.ravel()
+        global_dofs = np.arange(flat_mask.sum(), dtype=int)
+
+        # Assign global DOF indices where DOFs are active
+        self.dof_map[self.node_freedom_table == 1] = global_dofs
+
+    def build_block_dof_map(self) -> None:
+        """
+        Build a precomputed block DOF map:
+            block_dof_map[blockno, local_dof] = global DOF label
+
+        After this, `block_freedom_table(blockno)` is simply:
+            bft = self.block_dof_map[blockno, :n_block_dof]
+        """
+        # Determine max DOFs per block
+        max_block_dofs = max(b.num_dof for b in self.blocks)
+
+        # Initialize table with -1
+        self.block_dof_map = -np.ones((len(self.blocks), max_block_dofs), dtype=int)
+
+        for blockno, block in enumerate(self.blocks):
+            local_dof_idx = 0
+            for i in range(block.num_nodes):
+                gid = block.node_map[i]
                 lid = self.mesh.node_map.local(gid)
-                for local_dof in range(block.element.dof_per_node):
-                    dof = block.dof_map[node, local_dof]
-                    DOF = self.dof_map[lid, local_dof]
-                    self.block_dof_map[b, dof] = DOF
+                for dof_type in block.element.node_freedom_table[0]:
+                    col = self.node_freedom_types.index(dof_type)
+                    gdof = self.dof_map[lid, col]
+                    self.block_dof_map[blockno, local_dof_idx] = gdof
+                    local_dof_idx += 1
+
+    def build_dof_maps(self) -> None:
+        """
+        Build all DOF-related tables for the model.
+
+        Steps:
+            1) Build node_freedom_table and node_freedom_types
+            2) Build global DOF map: dof_map[node, local_dof]
+            3) Build per-block DOF map: block_dof_map[blockno, local_dof]
+        """
+        # 1) Node-level DOFs
+        self.build_node_freedom_table()
+
+        # 2) Global DOF numbering
+        self.build_dof_map()
+
+        # 3) Precompute block → global DOFs
+        self.build_block_dof_map()
+
+
+def normalize(a: Sequence[float]) -> NDArray:
+    v = np.asarray(a)
+    return v / np.linalg.norm(v)
