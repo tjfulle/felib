@@ -5,41 +5,35 @@ import numpy as np
 
 from ..collections import Solution
 from ..solver import DirectSolver
-from .base import Step
+from .base import CompiledStep
 from .constraint import build_linear_constraint
-from .static import StaticStepBuilder
+from .static import StaticStep
 
 if TYPE_CHECKING:
     from ..model import Model
     from ..solver import SolverState
 
 
-class DirectStepBuilder(StaticStepBuilder):
+class DirectStep(StaticStep):
     def __init__(self, name: str, period: float = 1.0) -> None:
         super().__init__(name, period=period)
 
-    def build(self, model: "Model", parent: Step | None) -> "DirectStep":  # type: ignore
-        self.construct_dbcs(model)
-        self.construct_nbcs(model)
-        self.construct_dloads(model)
-        self.construct_dsloads(model)
-        self.construct_rloads(model)
-        self.construct_constraints(model)
-        return DirectStep(
+    def compile(self, model: "Model", parent: CompiledStep | None) -> CompiledStep:
+        return CompiledDirectStep(
             name=self.name,
             parent=parent,
             period=self.period,
-            dbcs=self.dbcs,
-            nbcs=self.nbcs,
-            dsloads=self.dsloads,
-            dloads=self.dloads,
-            rloads=self.rloads,
-            equations=self.mpcs,
+            dbcs=self.compile_dbcs(model),
+            nbcs=self.compile_nbcs(model),
+            dloads=self.compile_dloads(model),
+            dsloads=self.compile_dsloads(model),
+            rloads=self.compile_rloads(model),
+            equations=self.compile_constraints(model),
         )
 
 
 @dataclass
-class DirectStep(Step):
+class CompiledDirectStep(CompiledStep):
     """
     Single linear static step.
 

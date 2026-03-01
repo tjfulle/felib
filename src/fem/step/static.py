@@ -20,23 +20,17 @@ from ..solver import NonlinearNewtonSolver
 from ..typing import DLoadT
 from ..typing import DSLoadT
 from ..typing import RLoadT
+from .base import CompiledStep
 from .base import Step
-from .base import StepBuilder
 from .constraint import build_linear_constraint
 
 if TYPE_CHECKING:
     from ..model import Model
 
 
-class StaticStepBuilder(StepBuilder):
+class StaticStep(Step):
     def __init__(self, name: str, period: float = 1.0, **options: Any) -> None:
         super().__init__(name=name, period=period)
-        self.dbcs: list[tuple[int, float]] = []
-        self.nbcs: list[tuple[int, float]] = []
-        self.dsloads: DSLoadT = defaultdict(lambda: defaultdict(list))
-        self.rloads: RLoadT = defaultdict(lambda: defaultdict(list))
-        self.dloads: DLoadT = defaultdict(lambda: defaultdict(list))
-        self.mpcs: list[list[int | float]] = []
         self.solver_opts = options
 
     def boundary(
@@ -96,27 +90,21 @@ class StaticStepBuilder(StepBuilder):
             coeffs.append(float(triples[i + 2]))
         constraints[f"constraint-{len(constraints)}"] = (nodes, dofs, coeffs, rhs)
 
-    def build(self, model: "Model", parent: Step | None) -> "StaticStep":
-        self.construct_dbcs(model)
-        self.construct_nbcs(model)
-        self.construct_dloads(model)
-        self.construct_dsloads(model)
-        self.construct_rloads(model)
-        self.construct_constraints(model)
-        return StaticStep(
+    def compile(self, model: "Model", parent: CompiledStep | None) -> CompiledStep:
+        return CompiledStaticStep(
             name=self.name,
             parent=parent,
             period=self.period,
-            dbcs=self.dbcs,
-            nbcs=self.nbcs,
-            dsloads=self.dsloads,
-            dloads=self.dloads,
-            rloads=self.rloads,
-            equations=self.mpcs,
+            dbcs=self.compile_dbcs(model),
+            nbcs=self.compile_nbcs(model),
+            dloads=self.compile_dloads(model),
+            dsloads=self.compile_dsloads(model),
+            rloads=self.compile_rloads(model),
+            equations=self.compile_constraints(model),
             solver_options=self.solver_opts,
         )
 
-    def construct_dbcs(self, model: "Model") -> None:
+    def compile_dbcs(self, model: "Model") -> list[tuple[int, float]]:
         seen: dict[int, float] = {}
         for nodes, dofs, value in self.metadata.get("dbcs", {}).values():
             lids: list[int]
@@ -132,9 +120,10 @@ class StaticStepBuilder(StepBuilder):
                 for dof in dofs:
                     DOF = model.dof_map[lid, dof]
                     seen[DOF] = value
-        self.dbcs = [(k, seen[k]) for k in sorted(seen)]
+        dbcs = [(k, seen[k]) for k in sorted(seen)]
+        return dbcs
 
-    def construct_nbcs(self, model: "Model") -> None:
+    def compile_nbcs(self, model: "Model") -> list[tuple[int, float]]:
         seen: dict[int, float] = defaultdict(float)
         for nodes, dofs, value in self.metadata.get("nbcs", {}).values():
             lids: list[int]
@@ -150,11 +139,13 @@ class StaticStepBuilder(StepBuilder):
                 for dof in dofs:
                     DOF = model.dof_map[lid, dof]
                     seen[DOF] += value
-        self.nbcs = [(k, seen[k]) for k in sorted(seen)]
+        nbcs = [(k, seen[k]) for k in sorted(seen)]
+        return nbcs
 
-    def construct_dloads(self, model: "Model") -> None:
-        dload: DistributedLoad
+    def compile_dloads(self, model: "Model") -> DLoadT:
+        dloads: DLoadT = defaultdict(lambda: defaultdict(list))
         for ltype, elements, *args in self.metadata.get("dloads", {}).values():
+            dload: DistributedLoad | None = None
             lids: list[int]
             if isinstance(elements, str):
                 if elements not in model.elemsets:
@@ -179,11 +170,14 @@ class StaticStepBuilder(StepBuilder):
                     g, direction = args
                     dload = GravityLoad(block.material.density * g, direction)
                 e = block.elem_map.local(gid)
-                self.dloads[block_no][e].append(dload)
+                assert dload is not None
+                dloads[block_no][e].append(dload)
+        return dloads
 
-    def construct_dsloads(self, model: "Model") -> None:
-        dsload: DistributedSurfaceLoad
+    def compile_dsloads(self, model: "Model") -> DSLoadT:
+        dsloads: DSLoadT = defaultdict(lambda: defaultdict(list))
         for ltype, sideset, *args in self.metadata.get("dsloads", {}).values():
+            dsload: DistributedSurfaceLoad
             if sideset not in model.sidesets:
                 raise ValueError(f"side set {sideset} not defined")
             if ltype == "traction":
@@ -199,12 +193,14 @@ class StaticStepBuilder(StepBuilder):
                 block = model.blocks[block_no]
                 gid = model.elem_map[elem_no]
                 lid = block.elem_map.local(gid)
-                self.dsloads[block_no][lid].append((edge_no, dsload))
+                dsloads[block_no][lid].append((edge_no, dsload))
+        return dsloads
 
-    def construct_rloads(self, model: "Model") -> None:
+    def compile_rloads(self, model: "Model") -> RLoadT:
         sideset: str
         H: NDArray
         u0: NDArray
+        rloads: RLoadT = defaultdict(lambda: defaultdict(list))
         for sideset, H, u0 in self.metadata.get("rloads", {}).values():
             if sideset not in model.sidesets:
                 raise ValueError(f"side set {sideset} not defined")
@@ -214,13 +210,15 @@ class StaticStepBuilder(StepBuilder):
                 gid = block.elem_map[ele_no]
                 lid = block.elem_map.local(gid)
                 rload = RobinLoad(edge=edge_no, H=H, u0=u0)
-                self.rloads[block_no][lid].append(rload)
+                rloads[block_no][lid].append(rload)
+        return rloads
 
-    def construct_constraints(self, model: "Model") -> None:
+    def compile_constraints(self, model: "Model") -> list[list[int | float]]:
         nodes: list[int]
         dofs: list[int]
         coeffs: list[float]
         rhs: float = 0.0
+        mpcs: list[list[int | float]] = []
         for nodes, dofs, coeffs, rhs in self.metadata.get("constraints", {}).values():
             mpc: list[int | float] = []
             for gid, dof, coeff in zip(nodes, dofs, coeffs):
@@ -230,11 +228,12 @@ class StaticStepBuilder(StepBuilder):
                 DOF = model.dof_map[lid, dof]
                 mpc.extend([DOF, coeff])
             mpc.append(rhs)
-            self.mpcs.append(mpc)
+            mpcs.append(mpc)
+        return mpcs
 
 
 @dataclass
-class StaticStep(Step):
+class CompiledStaticStep(CompiledStep):
     solver_options: dict[str, Any] = field(default_factory=dict)
 
     def solve(self, model: "Model") -> Solution:
@@ -244,7 +243,7 @@ class StaticStep(Step):
         nf = len(fdofs)
         neq = len(self.equations) if self.equations else 0
 
-        def fun(x: NDArray, model: "Model", step: "StaticStep"):
+        def fun(x: NDArray, model: "Model", step: "CompiledStep"):
             """
             Assemble the nonlinear equilibrium system for the current Newton iterate.
 

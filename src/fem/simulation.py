@@ -5,11 +5,11 @@ import exodusii
 import numpy as np
 from numpy.typing import NDArray
 
-from .step import DirectStepBuilder
-from .step import HeatTransferStepBuilder
-from .step import StaticStepBuilder
+from .step import CompiledStep
+from .step import DirectStep
+from .step import HeatTransferStep
+from .step import StaticStep
 from .step import Step
-from .step import StepBuilder
 
 if TYPE_CHECKING:
     from .model import Model
@@ -19,8 +19,8 @@ class Simulation:
     def __init__(self, model: "Model") -> None:
         self.model: "Model" = model
         self.model.freeze()
-        self.steps: list[StepBuilder] = []
-        self.csteps: list[Step] = []
+        self.steps: list[Step] = []
+        self.csteps: list[CompiledStep] = []
 
         # Solution and residual storage
         self.dofs: NDArray = np.zeros((2, self.model.num_dof))
@@ -36,23 +36,21 @@ class Simulation:
 
     def static_step(
         self, name: str | None = None, period: float = 1.0, **options: Any
-    ) -> StaticStepBuilder:
+    ) -> StaticStep:
         name = name or f"step-{len(self.steps)}"
-        step = StaticStepBuilder(name=name, period=period, **options)
+        step = StaticStep(name=name, period=period, **options)
         self.steps.append(step)
         return step
 
-    def direct_step(self, name: str | None = None, period: float = 1.0) -> DirectStepBuilder:
+    def direct_step(self, name: str | None = None, period: float = 1.0) -> DirectStep:
         name = name or f"step-{len(self.steps)}"
-        step = DirectStepBuilder(name=name, period=period)
+        step = DirectStep(name=name, period=period)
         self.steps.append(step)
         return step
 
-    def heat_transfer_step(
-        self, name: str | None = None, period: float = 1.0
-    ) -> HeatTransferStepBuilder:
+    def heat_transfer_step(self, name: str | None = None, period: float = 1.0) -> HeatTransferStep:
         name = name or f"step-{len(self.steps)}"
-        step = HeatTransferStepBuilder(name=name, period=period)
+        step = HeatTransferStep(name=name, period=period)
         self.steps.append(step)
         return step
 
@@ -60,18 +58,18 @@ class Simulation:
         """
         Run through all analysis steps and solve.
 
-        For each step, triggers Step.solve(), advances state, and writes results to
+        For each step, triggers CompiledStep.solve(), advances state, and writes results to
         the Exodus output file.
         """
         file = ExodusFile(self.model)
         parent = None
         for i, step in enumerate(self.steps):
-            s = step.build(self.model, parent=parent)
-            s.solve(self.model)
+            cstep = step.compile(self.model, parent=parent)
+            cstep.solve(self.model)
             self.model.advance_state()
-            file.update(i + 1, s)
-            parent = s
-            self.csteps.append(s)
+            file.update(i + 1, cstep)
+            parent = cstep
+            self.csteps.append(cstep)
 
 
 class ExodusFile:
@@ -175,13 +173,13 @@ class ExodusFile:
         self.file = file
         self.model = model
 
-    def update(self, step_no: int, step: Step) -> None:
+    def update(self, step_no: int, step: CompiledStep) -> None:
         """
         Write updated values for a new time step.
 
         Args:
             step_no: Index of current step.
-            step: Step object containing updated results.
+            step: CompiledStep object containing updated results.
         """
         file = self.file
         model = self.model

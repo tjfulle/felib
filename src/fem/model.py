@@ -11,7 +11,7 @@ from .material import Material
 from .mesh import Mesh
 from .pytools import _require_unfrozen
 from .pytools import frozen_property
-from .step import Step
+from .step import CompiledStep
 
 # Combined type union for array-like input
 ArrayLike = NDArray | Sequence
@@ -141,7 +141,7 @@ class Model:
 
     def assemble(
         self,
-        step: Step,
+        step: CompiledStep,
         increment: int,
         time: Sequence[float],
         dt: float,

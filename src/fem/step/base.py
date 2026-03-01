@@ -17,25 +17,25 @@ if TYPE_CHECKING:
     from ..model import Model
 
 
-class StepBuilder(ABC):
+class Step(ABC):
     def __init__(self, name: str, period: float = 1.0) -> None:
         self.name = name
         self.period = period
         self.metadata: dict[str, dict] = defaultdict(dict)
 
     @abstractmethod
-    def build(self, model: "Model", parent: "Step | None") -> "Step": ...
+    def compile(self, model: "Model", parent: "CompiledStep | None") -> "CompiledStep": ...
 
 
 @dataclass
-class Step(ABC):
+class CompiledStep(ABC):
     name: str = ""
-    parent: "Step | None" = None
+    parent: "CompiledStep | None" = None
     period: float = 1.0
     dbcs: list[tuple[int, float]] = field(default_factory=list)
     nbcs: list[tuple[int, float]] = field(default_factory=list)
-    dsloads: DSLoadT = field(default_factory=dict)
     dloads: DLoadT = field(default_factory=dict)
+    dsloads: DSLoadT = field(default_factory=dict)
     rloads: RLoadT = field(default_factory=dict)
     equations: list[list[int | float]] = field(default_factory=list)
     start: float = field(init=False, default=0.0)
