@@ -3,16 +3,45 @@ from typing import Callable
 import numpy as np
 from numpy.typing import NDArray
 
-from .base import CompiledStep
+from ..typing import DLoadT
+from ..typing import DSLoadT
+from ..typing import RLoadT
 from .constraint import build_linear_constraint
 
 
-class AssembleKernel:
-    def __init__(self, assemble_fun: Callable[..., tuple[NDArray, NDArray]], u0: NDArray) -> None:
+class AssemblyKernel:
+    def __init__(
+        self,
+        assemble_fun: Callable[..., tuple[NDArray, NDArray]],
+        u0: NDArray,
+        *,
+        step: int,
+        increment: int,
+        time: tuple[float, float],
+        dt: float,
+        ddofs: NDArray,
+        dvals: NDArray,
+        nbcs: list[tuple[int, float]],
+        dloads: DLoadT,
+        dsloads: DSLoadT,
+        rloads: RLoadT,
+        equations: list[list],
+    ) -> None:
         self.assemble_fun = assemble_fun
         self.u0 = u0
+        self.step = step
+        self.increment = increment
+        self.time = time
+        self.dt = dt
+        self.ddofs = ddofs
+        self.dvals = dvals  # Target Dirichlet values at end of step
+        self.nbcs = nbcs
+        self.dloads = dloads
+        self.dsloads = dsloads
+        self.rloads = rloads
+        self.equations = equations
 
-    def __call__(self, x: NDArray, step: "CompiledStep"):
+    def __call__(self, x: NDArray):
         """
         Assemble the nonlinear equilibrium system for the current Newton iterate.
 
@@ -30,9 +59,6 @@ class AssembleKernel:
                 where:
                     u_f : free displacement DOFs
                     λ   : Lagrange multipliers associated with linear constraints.
-
-        step : StaticStep
-            Current load step definition.
 
         Assembly Procedure
         ------------------
@@ -98,22 +124,28 @@ class AssembleKernel:
         - The system with constraints is symmetric but indefinite.
         - Lagrange multipliers represent constraint reaction forces.
         """
-        ddofs = step.ddofs
-        dvals = step.dvals[1, :]  # Target Dirichlet values at end of step
         ndof = len(self.u0)
-        fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
+        fdofs = np.array(sorted(set(range(ndof)) - set(self.ddofs)))
         nf = len(fdofs)
-        neq = len(step.equations) if step.equations else 0
+        neq = len(self.equations) if self.equations else 0
 
         u = self.u0.copy()
         u[fdofs] = x[:nf]
-        u[ddofs] = dvals
+        u[self.ddofs] = self.dvals
         du = u - self.u0
 
-        time = [0, step.start]
-        dt = step.period
-        K, R = self.assemble_fun(step, step.number, time, dt, u, du)
-        for dof, value in step.nbcs:
+        K, R = self.assemble_fun(
+            self.step,
+            self.increment,
+            self.time,
+            self.dt,
+            u,
+            du,
+            self.dloads,
+            self.dsloads,
+            self.rloads,
+        )
+        for dof, value in self.nbcs:
             R[dof] -= value
         R_f = R[fdofs]
         K_ff = K[np.ix_(fdofs, fdofs)]
@@ -121,7 +153,7 @@ class AssembleKernel:
         if neq == 0:
             return K_ff, R_f
 
-        C, r = build_linear_constraint(ndof, step.equations)
+        C, r = build_linear_constraint(ndof, self.equations)
         C_f = C[:, fdofs]
         g = np.dot(C, u) - r
         Ka = np.block([[K_ff, C_f.T], [C_f, np.zeros((neq, neq))]])

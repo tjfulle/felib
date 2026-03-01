@@ -11,7 +11,9 @@ from .material import Material
 from .mesh import Mesh
 from .pytools import _require_unfrozen
 from .pytools import frozen_property
-from .step import CompiledStep
+from .typing import DLoadT
+from .typing import DSLoadT
+from .typing import RLoadT
 
 # Combined type union for array-like input
 ArrayLike = NDArray | Sequence
@@ -141,12 +143,15 @@ class Model:
 
     def assemble(
         self,
-        step: CompiledStep,
+        step: int,
         increment: int,
         time: Sequence[float],
         dt: float,
         u: NDArray,
         du: NDArray,
+        dloads: DLoadT,
+        dsloads: DSLoadT,
+        rloads: RLoadT,
     ) -> tuple[NDArray, NDArray]:
         """
         Global matrix and residual assembly.
@@ -170,15 +175,15 @@ class Model:
         for b, block in enumerate(self.blocks):
             bft = self.block_freedom_table(b)
             kb, rb = block.assemble(
-                step.number,
+                step,
                 increment,
                 time,
                 dt,
                 u[bft],
                 du[bft],
-                dloads=step.dloads.get(b),
-                dsloads=step.dsloads.get(b),
-                rloads=step.rloads.get(b),
+                dloads=dloads.get(b),
+                dsloads=dsloads.get(b),
+                rloads=rloads.get(b),
             )
             K[np.ix_(bft, bft)] += kb
             R[bft] += rb

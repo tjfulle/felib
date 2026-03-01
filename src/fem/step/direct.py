@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 
 from ..collections import Solution
 from ..solver import DirectSolver
-from .assemble import AssembleKernel
+from .assemble import AssemblyKernel
 from .base import CompiledStep
 from .static import StaticStep
 
@@ -53,9 +53,26 @@ class CompiledDirectStep(CompiledStep):
         x0 = u0[fdofs]
         if neq > 0:
             x0 = np.hstack([x0, np.zeros(neq)])
-        kernel = AssembleKernel(fun, u0)
+        increment = 1
+        time = (0.0, self.start)
+        dt = self.period
+        kernel = AssemblyKernel(
+            fun,
+            u0,
+            step=self.number,
+            increment=increment,
+            time=time,
+            dt=dt,
+            ddofs=ddofs,
+            dvals=self.dvals[1, :],
+            nbcs=self.nbcs,
+            dloads=self.dloads,
+            dsloads=self.dsloads,
+            rloads=self.rloads,
+            equations=self.equations,
+        )
         solver = DirectSolver()
-        state = solver(kernel, x0, args=(self,))
+        state = solver(kernel, x0)
 
         # -------------------------------------------------
         # Construct final displacement
@@ -65,7 +82,17 @@ class CompiledDirectStep(CompiledStep):
         u[ddofs] = dvals
 
         # Reassemble to compute reactions
-        K, R = fun(self, 1, [0.0, self.start], self.period, u, np.zeros_like(u))
+        K, R = fun(
+            self.number,
+            increment,
+            time,
+            dt,
+            u,
+            u - u0,
+            self.dloads,
+            self.dsloads,
+            self.rloads,
+        )
         for dof, value in self.nbcs:
             R[dof] -= value
         react = np.zeros_like(R)

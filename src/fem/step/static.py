@@ -21,7 +21,7 @@ from ..solver import NonlinearNewtonSolver
 from ..typing import DLoadT
 from ..typing import DSLoadT
 from ..typing import RLoadT
-from .assemble import AssembleKernel
+from .assemble import AssemblyKernel
 from .base import CompiledStep
 from .base import Step
 
@@ -239,7 +239,6 @@ class CompiledStaticStep(CompiledStep):
 
     def solve(self, fun: Callable[..., tuple[NDArray, NDArray]], u0: NDArray) -> NDArray:
         ddofs = self.ddofs
-        dvals = self.dvals[1, :]  # Target Dirichlet values at end of step
         ndof = len(u0)
         fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
         nf = len(fdofs)
@@ -249,12 +248,28 @@ class CompiledStaticStep(CompiledStep):
         if neq > 0:
             x0 = np.hstack([x0, np.zeros(neq)])
 
-        kernel = AssembleKernel(fun, u0)
+        increment = 1
+        time = (0, self.start)
+        dt = self.period
+        kernel = AssemblyKernel(
+            fun,
+            u0,
+            step=self.number,
+            increment=increment,
+            time=time,
+            dt=dt,
+            ddofs=ddofs,
+            dvals=self.dvals[1, :],
+            nbcs=self.nbcs,
+            dloads=self.dloads,
+            dsloads=self.dsloads,
+            rloads=self.rloads,
+            equations=self.equations,
+        )
         solver = NonlinearNewtonSolver()
         state = solver(
             kernel,
             x0,
-            args=(self,),
             atol=self.solver_options.get("atol"),
             rtol=self.solver_options.get("rtol"),
             maxiter=self.solver_options.get("maxiter"),
@@ -262,8 +277,18 @@ class CompiledStaticStep(CompiledStep):
 
         u = u0.copy()
         u[fdofs] = state.x[:nf]
-        u[ddofs] = dvals
-        K, R = fun(self, 1, [0, self.start], self.period, u, u - u0)
+        u[ddofs] = self.dvals[1, :]
+        K, R = fun(
+            self.number,
+            increment,
+            time,
+            dt,
+            u,
+            u - u0,
+            self.dloads,
+            self.dsloads,
+            self.rloads,
+        )
         for dof, value in self.nbcs:
             R[dof] -= value
         react = np.zeros_like(R)
