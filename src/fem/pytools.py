@@ -1,5 +1,6 @@
 from functools import wraps
 
+
 def _require_unfrozen(method):
     @wraps(method)
     def wrapper(self, *args, **kwargs):
@@ -25,4 +26,5 @@ def frozen_property(method):
                 f"'{class_name}.{method_name}' cannot be called until after {class_name} is frozen"
             )
         return method(self)
+
     return wrapper

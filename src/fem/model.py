@@ -1,7 +1,4 @@
 import logging
-from dataclasses import dataclass
-from functools import wraps
-from dataclasses import field
 from typing import Sequence
 
 import numpy as np
@@ -11,9 +8,9 @@ from .block import ElementBlock
 from .collections import Map
 from .element import Element
 from .material import Material
-from .pytools import frozen_property
-from .pytools import _require_unfrozen
 from .mesh import Mesh
+from .pytools import _require_unfrozen
+from .pytools import frozen_property
 from .step import Step
 
 # Combined type union for array-like input
@@ -25,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class Model:
     """Finite element model container class."""
+
     def __init__(self, mesh: "Mesh", name: str = "Model-1") -> None:
         self.name = name
         self.mesh = mesh
@@ -54,7 +52,6 @@ class Model:
     @frozen_property
     def blocks(self) -> list[ElementBlock]:
         return self._blocks
-
 
     @frozen_property
     def node_freedom_table(self) -> NDArray:

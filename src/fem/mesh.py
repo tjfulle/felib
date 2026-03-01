@@ -1,6 +1,5 @@
 import logging
 from collections import defaultdict
-from functools import wraps
 from typing import Sequence
 from typing import Type
 
@@ -11,13 +10,11 @@ from . import collections
 from .block import TopoBlock
 from .cell import Cell
 from .collections import Map
-from .typing import RegionSelector
-from .pytools import frozen_property
 from .pytools import _require_unfrozen
+from .pytools import frozen_property
+from .typing import RegionSelector
 
 logger = logging.getLogger(__name__)
-
-
 
 
 class Mesh:
@@ -121,6 +118,7 @@ class Mesh:
     @frozen_property
     def sidesets(self) -> dict[str, list[tuple[int, int]]]:
         return self._sidesets
+
 
 class _MeshBuilder:
     def __init__(self, mesh: Mesh) -> None:
