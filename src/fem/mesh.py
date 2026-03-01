@@ -32,7 +32,7 @@ class Mesh:
         self.connect: NDArray
         self.node_map: Map
         self.elem_map: Map
-        self.nodes: list[collections.Node] = []
+        self.nodes: list[collections.Node]
 
         self._init(nodes, elements)
 
@@ -82,7 +82,7 @@ class Mesh:
         num_node: int = len(nodes)
         max_dim: int = max(len(n[1:]) for n in nodes)
         self.coords = np.zeros((num_node, max_dim), dtype=float)
-        self.nodes.clear()
+        self.nodes = []
         for i, node in enumerate(nodes):
             xc = [float(x) for x in node[1:]]
             self.coords[i, : len(xc)] = xc
