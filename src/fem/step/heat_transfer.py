@@ -13,6 +13,7 @@ from ..collections import GravityLoad
 from ..collections import HeatFlux
 from ..collections import HeatSource
 from ..collections import RobinLoad
+from ..constants import T
 from ..typing import DLoadT
 from ..typing import DSLoadT
 from ..typing import RLoadT
@@ -29,7 +30,7 @@ class HeatTransferStep(Step):
         super().__init__(name=name, period=period)
 
     def temperature(self, *, nodes: str | int | list[int], value: float = 0.0) -> None:
-        dofs = [0]
+        dofs = [T]
         dbcs = self.metadata["dbcs"]
         dbcs[f"dbc-{len(dbcs)}"] = (nodes, dofs, value)
 
@@ -90,7 +91,8 @@ class HeatTransferStep(Step):
                 lids = [model.node_map.local(gid) for gid in nodes]
             for lid in lids:
                 for dof in dofs:
-                    DOF = model.dof_map[lid, dof]
+                    i = model.node_freedom_types.index(dof)
+                    DOF = model.dof_map[lid, i]
                     seen[DOF] = value
         dbcs = [(k, seen[k]) for k in sorted(seen)]
         return dbcs
