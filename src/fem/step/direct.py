@@ -95,4 +95,6 @@ class CompiledDirectStep(CompiledStep):
             lagrange_multipliers=state.x[nf:],
             iterations=1,
         )
-        return u, react
+
+        flux = np.dot(K[:ndof, :ndof], u[:ndof])
+        return u, flux

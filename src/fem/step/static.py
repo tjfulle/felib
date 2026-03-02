@@ -293,7 +293,8 @@ class CompiledStaticStep(CompiledStep):
             iterations=state.iterations,
         )
 
-        return u, react
+        flux = np.dot(K[:ndof, :ndof], u[:ndof])
+        return u, flux
 
 
 def normalize(a: Sequence[float]) -> NDArray:
