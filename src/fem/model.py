@@ -39,6 +39,7 @@ class Model:
         self._node_freedom_types: list[int] = []
         self._block_dof_map: NDArray = np.empty((0, 0), dtype=int)
         self._dof_map: NDArray = np.empty((0, 0), dtype=int)
+        self._dof_types: NDArray = np.empty(0, dtype=int)
         self._ndof: int = -1
 
     def freeze(self) -> None:
@@ -65,6 +66,10 @@ class Model:
     @frozen_property
     def dof_map(self) -> NDArray:
         return self._dof_map
+
+    @frozen_property
+    def dof_types(self) -> NDArray:
+        return self._dof_types
 
     @frozen_property
     def ndof(self) -> int:
@@ -274,7 +279,14 @@ class _ModelBuilder:
         global_dofs = np.arange(flat_mask.sum(), dtype=int)
 
         # Assign global DOF indices where DOFs are active
-        self.model._dof_map[self.model._node_freedom_table == 1] = global_dofs
+        table = self.model._node_freedom_table
+        self.model._dof_map[table == 1] = global_dofs
+
+        # DOFs associated with displacment
+        dof_types = np.zeros(global_dofs.size, dtype=int)
+        node_types_expanded = np.tile(self.model._node_freedom_types, (nnode, 1))
+        dof_types[:] = node_types_expanded.ravel()[flat_mask]
+        self.model._dof_types = dof_types
 
     def build_block_dof_map(self) -> None:
         """

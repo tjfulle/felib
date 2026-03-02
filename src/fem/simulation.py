@@ -5,6 +5,7 @@ import exodusii
 import numpy as np
 from numpy.typing import NDArray
 
+from . import constants
 from .step import CompiledStep
 from .step import DirectStep
 from .step import HeatTransferStep
@@ -67,11 +68,15 @@ class Simulation:
         """
         file = ExodusFile(self.model)
         parent: CompiledStep | None = None
+        displ_mask = np.isin(self.model.dof_types, [constants.Ux, constants.Uy, constants.Uz])
+        temp_mask = self.model.dof_types == constants.T
         for i, step in enumerate(self.steps):
             cstep = step.compile(self.model, parent=parent)
             self.dofs[1] = cstep.solve(self.model.assemble, self.dofs[0])
             self.advance_state()
-            file.update(i + 1, cstep, self.dofs[1])
+            u = self.dofs[1, displ_mask]
+            temp = self.dofs[1, temp_mask]
+            file.update(i + 1, cstep, u, temp)
             parent = cstep
             self.csteps.append(cstep)
 
@@ -162,12 +167,16 @@ class ExodusFile:
         file.put_time(1, 0.0)
         file.put_global_variable_values(1, np.zeros(1, dtype=float))
 
-        file.put_node_variable_params(model.coords.shape[1])
-        displ_names = [self.displ_name(i) for i in range(model.coords.shape[1])]
-        file.put_node_variable_names(displ_names)
+        node_variable_params = [self.displ_name(i) for i in range(model.coords.shape[1])]
+        if constants.T in model.node_freedom_types:
+            node_variable_params.append("T")
+        file.put_node_variable_params(len(node_variable_params))
+        file.put_node_variable_names(node_variable_params)
 
         for i in range(model.coords.shape[1]):
             file.put_node_variable_values(1, self.displ_name(i), np.zeros(model.coords.shape[0]))
+        if "T" in node_variable_params:
+            file.put_node_variable_values(1, "T", np.zeros(model.coords.shape[0]))
 
         # Write initial element variable values
         for j, block in enumerate(model.blocks):
@@ -177,7 +186,7 @@ class ExodusFile:
         self.file = file
         self.model = model
 
-    def update(self, step_no: int, step: CompiledStep, u: NDArray) -> None:
+    def update(self, step_no: int, step: CompiledStep, u: NDArray, temp: NDArray) -> None:
         """
         Write updated values for a new time step.
 
@@ -191,8 +200,12 @@ class ExodusFile:
         file.put_time(step_no + 1, step.start + step.period)
 
         stride = model.coords.shape[1]
+        if not u.size:
+            u = np.zeros(model.coords.size)
         for i in range(model.coords.shape[1]):
             file.put_node_variable_values(step_no + 1, self.displ_name(i), u[i::stride])
+        if temp.size:
+            file.put_node_variable_values(step_no + 1, "T", temp)
 
         for j, block in enumerate(model.blocks):
             for name, value in block.element_variable_values():
