@@ -1,3 +1,4 @@
 *.exo
 venv
 *.pyc
+*.egg-info
