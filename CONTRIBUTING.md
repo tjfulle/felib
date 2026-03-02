@@ -6,7 +6,7 @@ Thank you for contributing to ME7540! We welcome improvements, bug fixes, and ne
 
 ## 1. Code Style
 
-- We follow **PEP8** coding standards.  
+- We follow [**PEP8**](https://peps.python.org/pep-0008) coding guidelines.  
 - All code must be **clean, readable, and concise**. Avoid large rewrites; focus on the task or issue at hand.  
 - Use `ruff` to lint and format your code. Check for linting issues with `ruff check .` and automatically format with `ruff format .`  
 - Type annotations are required where possible. Use `mypy .` to check your types.
