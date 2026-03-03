@@ -27,15 +27,14 @@ class IsoparametricElement(Element):
 
     edges: NDArray
     ref_coords: NDArray
-    gauss_pts: NDArray
     gauss_wts: NDArray
-    edge_gauss_pts: NDArray
+    gauss_pts: NDArray
     edge_gauss_wts: NDArray
+    edge_gauss_pts: NDArray
 
     # —————————————————————————————————————————————————————————————
     # Integration point accessors
     # —————————————————————————————————————————————————————————————
-
     def integration_points(self) -> Generator[tuple[Any, Any], None, None]:
         """
         Yield integration weights and local coordinates.
@@ -96,7 +95,7 @@ class IsoparametricElement(Element):
         Returns:
             Count of Gauss points.
         """
-        return len(self.gauss_wts)
+        return self.gauss_wts.size
 
     # —————————————————————————————————————————————————————————————
     # Abstract shape and kinematic methods

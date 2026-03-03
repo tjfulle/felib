@@ -18,11 +18,9 @@ def beam_bending():
 
     nodes, elems = felib.meshing.rectmesh((0, 10.0, 0, 0.3), nx=10, ny=3)
     mesh = felib.mesh.Mesh(nodes=nodes, elements=elems)
-    mesh.nodeset(name="nodeset-1", region=lambda x, on_boundary: on_boundary and x[0] > 9.991)
-    mesh.sideset(name="sideset-1", region=lambda x, on_boundary: on_boundary and x[0] < 0.001)
+    mesh.nodeset(name="ihi", region=lambda x, on_boundary: on_boundary and x[0] > 9.991)
+    mesh.sideset(name="ilo", region=lambda x, on_boundary: on_boundary and x[0] < 0.001)
     mesh.block(name="Block-1", cell_type=felib.element.Quad4, region=lambda x, on_boundary: True)
-
-    #    mesh = make_mesh()
 
     m = felib.material.LinearElastic(density=2400.0, youngs_modulus=E, poissons_ratio=nu)
     model = felib.model.Model(mesh, name="shear_locking")
@@ -30,10 +28,8 @@ def beam_bending():
 
     simulation = felib.simulation.Simulation(model)
     step = simulation.static_step()
-    step.boundary(nodes="nodeset-1", dofs=[X, Y], value=0.0)
-    #    step.boundary(nodes="nodeset-2", dofs=[X], value=0.0)
-
-    step.traction(sideset="sideset-1", magnitude=1, direction=[0, -1])
+    step.boundary(nodes="ihi", dofs=[X, Y], value=0.0)
+    step.traction(sideset="ilo", magnitude=1, direction=[0, -1])
 
     simulation.run()
 
@@ -51,6 +47,26 @@ def beam_bending():
     ax.set_aspect("equal")
     plt.legend(loc="best")
     plt.show()
+
+
+def quadratic_solution() -> tuple[NDArray, NDArray, NDArray]:
+    nodes, elems = felib.meshing.rectmesh_quad8((0, 10.0, 0, 0.3), nx=10, ny=3)
+    mesh = felib.mesh.Mesh(nodes=nodes, elements=elems)
+    mesh.nodeset(name="ihi", region=lambda x, on_boundary: on_boundary and x[0] > 9.991)
+    mesh.sideset(name="ilo", region=lambda x, on_boundary: on_boundary and x[0] < 0.001)
+    mesh.block(name="Block-1", cell_type=felib.element.Quad8, region=lambda x, on_boundary: True)
+
+    m = felib.material.LinearElastic(density=2400.0, youngs_modulus=E, poissons_ratio=nu)
+    model = felib.model.Model(mesh, name="shear_locking")
+    model.assign_properties(block="Block-1", element=felib.element.CPS8(), material=m)
+
+    simulation = felib.simulation.Simulation(model)
+    step = simulation.static_step()
+    step.boundary(nodes="ihi", dofs=[X, Y], value=0.0)
+    step.traction(sideset="ilo", magnitude=1, direction=[0, -1])
+
+    simulation.run()
+    return model.coords, model.connect, simulation.dofs[1].reshape(model.nnode, -1)
 
 
 def analytic_solution(mesh: felib.mesh.Mesh) -> NDArray:

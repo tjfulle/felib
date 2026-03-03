@@ -29,6 +29,7 @@ from numpy.typing import NDArray
 from ..constants import Ux
 from ..constants import Uy
 from ..material import Material
+from . import gauss
 from .isop import IsoparametricElement
 from .reference import Quad4
 from .reference import Quad8
@@ -147,10 +148,8 @@ class CPX3(Tri3, ContinuumElement, IsoparametricElement):
     and isoparametric quadrature definitions.
     """
 
-    gauss_pts = np.array([[1.0, 1.0], [4.0, 1.0], [1.0, 4.0]], dtype=float) / 6.0
-    gauss_wts = np.array([1.0, 1.0, 1.0], dtype=float) / 6.0
-    edge_gauss_pts = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)], dtype=float)
-    edge_gauss_wts = np.array([1.0, 1.0], dtype=float)
+    gauss_wts, gauss_pts = gauss.gauss_tri3()
+    edge_gauss_wts, edge_gauss_pts = gauss.gauss1d(2)
 
     @property
     def node_freedom_table(self) -> list[tuple[int, ...]]:
@@ -236,10 +235,8 @@ class CPX4(Quad4, ContinuumElement, IsoparametricElement):
     Geometric shape (Quad4) with continuum material update behavior.
     """
 
-    gauss_pts = np.array([[-1.0, -1.0], [1.0, -1.0], [-1.0, 1.0], [1.0, 1.0]]) / np.sqrt(3.0)
-    gauss_wts = np.array([1.0, 1.0, 1.0, 1.0], dtype=float)
-    edge_gauss_pts = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)], dtype=float)
-    edge_gauss_wts = np.array([1.0, 1.0], dtype=float)
+    gauss_wts, gauss_pts = gauss.gauss2x2()
+    edge_gauss_wts, edge_gauss_pts = gauss.gauss1d(2)
 
     @property
     def node_freedom_table(self) -> list[tuple[int, ...]]:
@@ -292,40 +289,8 @@ class CPX8(Quad8, ContinuumElement, IsoparametricElement):
     Geometric shape (Quad8) with continuum material update behavior.
     """
 
-    g = np.sqrt(3.0 / 5.0)
-    gauss_pts = np.array(
-        [
-            [-g, -g],
-            [0.0, -g],
-            [g, -g],
-            [-g, 0.0],
-            [0.0, 0.0],
-            [g, 0.0],
-            [-g, g],
-            [0.0, g],
-            [g, g],
-        ]
-    )
-    gauss_wts = (
-        np.array(
-            [
-                25,
-                40,
-                25,
-                40,
-                64,
-                40,
-                25,
-                40,
-                25,
-            ],
-            dtype=float,
-        )
-        / 81.0
-    )
-    # 3-point Gauss rule for quadratic edges
-    edge_gauss_pts = np.array([-g, 0.0, g], dtype=float)
-    edge_gauss_wts = np.array([5.0, 8.0, 5.0], dtype=float) / 9.0
+    gauss_wts, gauss_pts = gauss.gauss3x3()
+    edge_gauss_wts, edge_gauss_pts = gauss.gauss1d(3)
 
     @property
     def node_freedom_table(self) -> list[tuple[int, ...]]:
