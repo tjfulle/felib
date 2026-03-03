@@ -43,8 +43,15 @@ class Mesh:
             self._frozen = True
 
     @_require_unfrozen
-    def block(self, *, name: str, cell_type: Type[Cell], region: RegionSelector) -> None:
-        return self._builder.block(name=name, cell_type=cell_type, region=region)
+    def block(
+        self,
+        *,
+        name: str,
+        cell_type: Type[Cell],
+        region: RegionSelector | None = None,
+        elements: Sequence[int] | None = None,
+    ) -> None:
+        return self._builder.block(name=name, cell_type=cell_type, region=region, elements=elements)
 
     @_require_unfrozen
     def nodeset(
@@ -53,12 +60,19 @@ class Mesh:
         return self._builder.nodeset(name, region=region, nodes=nodes)
 
     @_require_unfrozen
-    def elemset(self, name: str, region: RegionSelector) -> None:
-        return self._builder.elemset(name, region=region)
+    def elemset(
+        self, name: str, region: RegionSelector | None = None, elements: Sequence[int] | None = None
+    ) -> None:
+        return self._builder.elemset(name, region=region, elements=elements)
 
     @_require_unfrozen
-    def sideset(self, name: str, region: RegionSelector) -> None:
-        return self._builder.sideset(name, region=region)
+    def sideset(
+        self,
+        name: str,
+        region: RegionSelector | None = None,
+        sides: list[Sequence[int]] | None = None,
+    ) -> None:
+        return self._builder.sideset(name, region=region, sides=sides)
 
     def _init(self, nodes: Sequence[Sequence[int | float]], elements: list[list[int]]) -> None:
         connected: set[int] = set([n for row in elements for n in row[1:]])
@@ -127,11 +141,27 @@ class _MeshBuilder:
         # Meta data to store information needed for one pass mesh assembly
         self.metadata: dict[str, dict] = defaultdict(dict)
 
-    def block(self, *, name: str, cell_type: Type[Cell], region: RegionSelector) -> None:
+    def block(
+        self,
+        *,
+        name: str,
+        cell_type: Type[Cell],
+        region: RegionSelector | None = None,
+        elements: Sequence[int] | None = None,
+    ) -> None:
+        if region is None and elements is None:
+            raise ValueError("Expected region or elements")
+        elif region is not None and elements is not None:
+            raise ValueError("Expected region or elements, not both")
         blocks = self.metadata["blocks"]
         if name in blocks:
             raise ValueError(f"Topo block {name!r} already defined")
-        blocks[name] = collections.BlockSpec(name=name, cell_type=cell_type, region=region)  # type: ignore
+        blocks[name] = collections.BlockSpec(
+            name=name,
+            cell_type=cell_type,
+            elements=elements,
+            region=region,  # type: ignore
+        )
 
     def construct_sets(self) -> None:
         self.construct_nodesets()
@@ -154,11 +184,15 @@ class _MeshBuilder:
         for name, spec in self.metadata.get("blocks", {}).items():
             # eids is the global elem index
             eids: list[int] = []
-            for e, conn in enumerate(mesh.connect):
-                p = mesh.coords[conn]
-                x = p.mean(axis=0)
-                if spec.region(x, on_boundary=False):
-                    eids.append(e)
+            if spec.elements is not None:
+                eids.extend([mesh.elem_map.local(el) for el in spec.elements])
+            else:
+                assert callable(spec.region)
+                for e, conn in enumerate(mesh.connect):
+                    p = mesh.coords[conn]
+                    x = p.mean(axis=0)
+                    if spec.region(x, on_boundary=False):
+                        eids.append(e)
 
             # By this point, eids holds the local element indices of each element in the block
             mask = np.isin(eids, list(assigned))
@@ -252,8 +286,6 @@ class _MeshBuilder:
         nodesets[f"nodeset-{len(nodesets)}"] = (name, region, nodes)
 
     def construct_nodesets(self) -> None:
-        if not self.assembled:
-            raise ValueError("Assemble builder before adding constructing node sets")
         self.mesh._nodesets.clear()
         name: str
         region: RegionSelector | None
@@ -263,44 +295,66 @@ class _MeshBuilder:
                 for node in self.mesh.nodes:
                     if region(node.x, on_boundary=node.on_boundary):  # type: ignore
                         self.mesh._nodesets[name].append(node.lid)
-                if name not in self.mesh._nodesets:
-                    raise ValueError(f"{name}: could not find nodes in region")
             elif nodes is not None:
                 for gid in nodes:
                     self.mesh._nodesets[name].append(self.mesh.node_map.local(gid))
+            else:
+                raise ValueError("Cannot construct nodeset from empty nodeset data")
+            if name not in self.mesh._nodesets:
+                raise ValueError(f"{name}: could not find nodes in region")
 
-    def elemset(self, name: str, region: RegionSelector) -> None:
+    def elemset(
+        self, name: str, region: RegionSelector | None = None, elements: Sequence[int] | None = None
+    ) -> None:
+        if region is None and elements is None:
+            raise ValueError("Expected region or elements")
+        elif region is not None and elements is not None:
+            raise ValueError("Expected region or elements, not both")
         elemsets = self.metadata["elemsets"]
         if name in elemsets:
             raise ValueError(f"Duplicate element set {name!r}")
-        elemsets[name] = region
+        elemsets[f"elemset-{len(elemsets)}"] = (name, region, elements)
 
     def construct_elemsets(self) -> None:
-        if not self.assembled:
-            raise ValueError("Assemble builder before adding constructing element sets")
         self.mesh._elemsets.clear()
         name: str
-        region: RegionSelector
-        for name, region in self.metadata.get("elemsets", {}).items():
-            for e, conn in enumerate(self.mesh.connect):
-                p = self.mesh.coords[conn]
-                x = p.mean(axis=0)
-                if region(x, on_boundary=False):  # type: ignore
-                    self.mesh._elemsets[name].append(e)
+        region: RegionSelector | None
+        elements: Sequence[int] | None
+        for name, region, elements in self.metadata.get("elemsets", {}).values():
+            if region is not None:
+                for e, conn in enumerate(self.mesh.connect):
+                    p = self.mesh.coords[conn]
+                    x = p.mean(axis=0)
+                    if region(x, on_boundary=False):  # type: ignore
+                        self.mesh._elemsets[name].append(e)
+            elif elements is not None:
+                for el in elements:
+                    self.mesh._elemsets[name].append(self.mesh.elem_map.local(el))
 
-    def sideset(self, name: str, region: RegionSelector) -> None:
+    def sideset(
+        self, name: str, region: RegionSelector | None, sides: list[Sequence[int]] | None = None
+    ) -> None:
+        if region is None and sides is None:
+            raise ValueError("Expected region or sides")
+        elif region is not None and sides is not None:
+            raise ValueError("Expected region or sides, not both")
         sidesets = self.metadata["sidesets"]
         if name in sidesets:
             raise ValueError(f"Duplicate side set {name!r}")
-        sidesets[name] = region
+        sidesets[f"sideset-{len(sidesets)}"] = (name, region, sides)
 
     def construct_sidesets(self) -> None:
         if not self.assembled:
-            raise ValueError("Assemble builder before adding constructing element sets")
+            raise ValueError("Assemble builder before constructing element sets")
         self.mesh._sidesets.clear()
         name: str
-        region: RegionSelector
-        for name, region in self.metadata.get("sidesets", {}).items():
-            for edge in self.mesh._edges:
-                if region(edge.x, on_boundary=True):  # type: ignore
-                    self.mesh._sidesets[name].append((edge.element, edge.edge))
+        region: RegionSelector | None
+        sides: list[Sequence[int]] | None
+        for name, region, sides in self.metadata.get("sidesets", {}).values():
+            if region is not None:
+                for edge in self.mesh._edges:
+                    if region(edge.x, on_boundary=True):  # type: ignore
+                        self.mesh._sidesets[name].append((edge.element, edge.edge))
+            elif sides is not None:
+                for el, side in sides:
+                    self.mesh._sidesets[name].append((self.mesh.elem_map.local(el), side - 1))

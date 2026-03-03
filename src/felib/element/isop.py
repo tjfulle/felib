@@ -410,10 +410,9 @@ class IsoparametricElement(Element):
         # ————————————————— Surface loads —————————————————
         for edge_no, dsload in dsloads:
             nodes = self.edges[edge_no]
-            pd = p[nodes]
             nft = [self.dof_per_node * n + d for n in nodes for d in range(self.dof_per_node)]
             for ipt, (w, xi) in enumerate(self.edge_integration_points()):
-                x = self.interpolate_edge(edge_no, pd, xi)
+                x = self.interpolate_edge(edge_no, p, xi)
                 n = self.edge_normal(edge_no, p, xi)
                 traction = dsload(step, increment, time, dt, eleno, edge_no, ipt, x.tolist(), n)
                 st = self.ref_edge_coords(edge_no, xi)

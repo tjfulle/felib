@@ -45,7 +45,7 @@ class Pn:
         st = self.ref_edge_coords(edge_no, xi)
         ix = self.edges[edge_no]
         N = self.shape(st)
-        return np.dot(N[ix], p)
+        return np.dot(N[ix], p[ix])
 
     def edge_tangent(self, edge_no: int, p: NDArray, xi: float) -> NDArray:
         ix = self.edges[edge_no]
@@ -123,7 +123,7 @@ class P4(Pn):
         )
         return a / 4.0
 
-    def shapegrad(self, xi):
+    def shape_derivative(self, xi):
         s, t = xi
         a = np.array(
             [[-1.0 + t, 1.0 - t, 1.0 + t, -1.0 - t], [-1.0 + s, -1.0 - s, 1.0 + s, 1.0 - s]]

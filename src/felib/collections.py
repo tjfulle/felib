@@ -319,7 +319,8 @@ class Edge:
 class BlockSpec:
     name: str
     cell_type: Type["Cell"]
-    region: RegionSelector
+    region: RegionSelector | None
+    elements: Sequence[int] | None
 
 
 @dataclass
