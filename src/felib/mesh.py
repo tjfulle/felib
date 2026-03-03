@@ -8,8 +8,8 @@ from numpy.typing import NDArray
 
 from . import collections
 from .block import TopoBlock
-from .cell import Cell
 from .collections import Map
+from .element import ReferenceElement
 from .pytools import _require_unfrozen
 from .pytools import frozen_property
 from .typing import RegionSelector
@@ -47,7 +47,7 @@ class Mesh:
         self,
         *,
         name: str,
-        cell_type: Type[Cell],
+        cell_type: Type[ReferenceElement],
         region: RegionSelector | None = None,
         elements: Sequence[int] | None = None,
     ) -> None:
@@ -145,7 +145,7 @@ class _MeshBuilder:
         self,
         *,
         name: str,
-        cell_type: Type[Cell],
+        cell_type: Type[ReferenceElement],
         region: RegionSelector | None = None,
         elements: Sequence[int] | None = None,
     ) -> None:
@@ -237,8 +237,8 @@ class _MeshBuilder:
         # Step 1: iterate all blocks and all elements in each block
         for b, block in enumerate(self.mesh._blocks):
             for e, conn in enumerate(block.connect):
-                for edge_no in range(block.cell_type.nedge):
-                    ix = block.cell_type.edge_nodes(edge_no)
+                for edge_no in range(block.ref_el.nedge):
+                    ix = block.ref_el.edge_nodes(edge_no)
                     gids = tuple(sorted([block.node_map[_] for _ in conn[ix]]))
                     edges[gids].append((b, e, edge_no))
 
@@ -251,15 +251,15 @@ class _MeshBuilder:
                 block = self.mesh._blocks[b]
                 conn = block.connect[e]
                 p = block.coords[conn]
-                normal = block.cell_type.edge_normal(edge_no, p)
+                normal = block.ref_el.edge_normal(edge_no, p)
                 gid = block.elem_map[e]
                 lid = self.mesh.elem_map.local(gid)
-                xd = block.cell_type.edge_centroid(edge_no, p)
+                xd = block.ref_el.edge_centroid(edge_no, p)
                 info = collections.Edge(
                     element=lid, x=xd.tolist(), edge=edge_no, normal=normal.tolist()
                 )
                 self.mesh._edges.append(info)
-                for ln in block.cell_type.edge_nodes(edge_no):
+                for ln in block.ref_el.edge_nodes(edge_no):
                     gid = block.node_map[conn[ln]]
                     lid = self.mesh.node_map.local(gid)
                     edge_normals[lid].append(normal)

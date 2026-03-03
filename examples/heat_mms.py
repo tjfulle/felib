@@ -20,7 +20,7 @@ def mms(esize: float = 0.05):
 
     nodes, elements = felib.meshing.uniform_plate(esize=esize)
     mesh = felib.mesh.Mesh(nodes=nodes, elements=elements)
-    mesh.block(name="Block-1", region=Everywhere(), cell_type=felib.cell.Tri3)
+    mesh.block(name="Block-1", region=Everywhere(), cell_type=felib.element.Tri3)
     mesh.elemset("All", region=Everywhere())
 
     m = felib.material.HeatConduction(conductivity=12.0, specific_heat=1.0)

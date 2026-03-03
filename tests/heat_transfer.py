@@ -22,7 +22,7 @@ def test_mms(tmp_path: Path):
     with py.working_dir(tmp_path):
         nodes, elements = felib.meshing.uniform_plate(esize=0.05)
         mesh = felib.mesh.Mesh(nodes=nodes, elements=elements)
-        mesh.block(name="Block-1", region=Everywhere(), cell_type=felib.cell.Tri3)
+        mesh.block(name="Block-1", region=Everywhere(), cell_type=felib.element.Tri3)
         mesh.elemset("All", region=Everywhere())
 
         m = felib.material.HeatConduction(conductivity=12.0, specific_heat=1.0)
@@ -82,7 +82,7 @@ def test_heat1(tmp_path: Path):
     with py.working_dir(tmp_path):
         nodes, elements = felib.meshing.uniform_plate(esize=0.05)
         mesh = felib.mesh.Mesh(nodes=nodes, elements=elements)
-        mesh.block(name="Block-1", region=Everywhere(), cell_type=felib.cell.Tri3)
+        mesh.block(name="Block-1", region=Everywhere(), cell_type=felib.element.Tri3)
         mesh.sideset("Top", region=Top())
         mesh.sideset("Bottom", region=Bottom())
         mesh.elemset("All", region=Everywhere())

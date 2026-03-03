@@ -1,4 +1,3 @@
-from . import cell
 from . import collections
 from . import element
 from . import material
@@ -13,7 +12,6 @@ from .constants import Y
 from .constants import Z
 
 __all__ = [
-    "cell",
     "collections",
     "element",
     "material",

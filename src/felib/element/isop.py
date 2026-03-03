@@ -230,6 +230,14 @@ class IsoparametricElement(Element):
         """
         return np.asarray(p).mean(axis=0)
 
+    def area(self, p: NDArray) -> float:
+        A: float = 0.0
+        for w, xi in self.integration_points():
+            dN = self.shape_derivative(xi)
+            J = np.dot(dN, p)
+            A += w * np.linalg.det(J)
+        return A
+
     def jacobian(self, p: NDArray, xi: NDArray) -> float:
         """
         Compute the volume Jacobian determinant at xi.

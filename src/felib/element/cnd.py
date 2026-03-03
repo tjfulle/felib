@@ -9,7 +9,7 @@ constitutive update behavior (via Material.eval). This file does
 
 Classes
 -------
-CnD
+ContinuumElement
     Base class for continuum elements (directional + shear components).
 CPX3
     Base constant strain triangle with 3 nodes.
@@ -29,12 +29,13 @@ from numpy.typing import NDArray
 from ..constants import Ux
 from ..constants import Uy
 from ..material import Material
-from .geom import P3
-from .geom import P4
 from .isop import IsoparametricElement
+from .reference import Quad4
+from .reference import Quad8
+from .reference import Tri3
 
 
-class CnD:
+class ContinuumElement:
     """
     Continuum element behavior mixin.
 
@@ -138,11 +139,11 @@ class CnD:
         return D, s
 
 
-class CPX3(P3, CnD, IsoparametricElement):
+class CPX3(Tri3, ContinuumElement, IsoparametricElement):
     """
     Base constant strain triangle element (3 nodes).
 
-    Combines geometric shape functions (P3) with continuum behavior (CnD)
+    Combines geometric shape functions (Tri3) with continuum behavior (ContinuumElement)
     and isoparametric quadrature definitions.
     """
 
@@ -228,11 +229,11 @@ class CPE3(CPX3):
         return B
 
 
-class CPX4(P4, CnD, IsoparametricElement):
+class CPX4(Quad4, ContinuumElement, IsoparametricElement):
     """
     Base constant strain quadrilateral element (4 nodes).
 
-    Geometric shape (P4) with continuum material update behavior.
+    Geometric shape (Quad4) with continuum material update behavior.
     """
 
     gauss_pts = np.array([[-1.0, -1.0], [1.0, -1.0], [-1.0, 1.0], [1.0, 1.0]]) / np.sqrt(3.0)
@@ -277,6 +278,92 @@ class CPE4(CPX4):
     def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
         dNdx = self.shape_gradient(p, xi)
         B = np.zeros((4, 8))
+        B[0, 0::2] = dNdx[0]
+        B[1, 1::2] = dNdx[1]
+        B[3, 0::2] = dNdx[1]
+        B[3, 1::2] = dNdx[0]
+        return B
+
+
+class CPX8(Quad8, ContinuumElement, IsoparametricElement):
+    """
+    Base 8 node quadrilateral element
+
+    Geometric shape (Quad8) with continuum material update behavior.
+    """
+
+    g = np.sqrt(3.0 / 5.0)
+    gauss_pts = np.array(
+        [
+            [-g, -g],
+            [0.0, -g],
+            [g, -g],
+            [-g, 0.0],
+            [0.0, 0.0],
+            [g, 0.0],
+            [-g, g],
+            [0.0, g],
+            [g, g],
+        ]
+    )
+    gauss_wts = (
+        np.array(
+            [
+                25,
+                40,
+                25,
+                40,
+                64,
+                40,
+                25,
+                40,
+                25,
+            ],
+            dtype=float,
+        )
+        / 81.0
+    )
+    # 3-point Gauss rule for quadratic edges
+    edge_gauss_pts = np.array([-g, 0.0, g], dtype=float)
+    edge_gauss_wts = np.array([5.0, 8.0, 5.0], dtype=float) / 9.0
+
+    @property
+    def node_freedom_table(self) -> list[tuple[int, ...]]:
+        return [(Ux, Uy), (Ux, Uy), (Ux, Uy), (Ux, Uy), (Ux, Uy), (Ux, Uy), (Ux, Uy), (Ux, Uy)]
+
+    def pmatrix(self, xi: NDArray) -> NDArray:
+        N = self.shape(xi)
+        P = np.zeros((16, 2))
+        P[0::2, 0] = N
+        P[1::2, 1] = N
+        return P
+
+
+class CPS8(CPX8):
+    """Plane stress constant strain quadrilateral element."""
+
+    ndir = 2
+    nshr = 1
+
+    def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
+        dNdx = self.shape_gradient(p, xi)
+        B = np.zeros((3, 16))
+        B[0, 0::2] = dNdx[0]
+        B[1, 1::2] = dNdx[1]
+        B[2, 0::2] = dNdx[1]
+        B[2, 1::2] = dNdx[0]
+        return B
+
+
+class CPE8(CPX8):
+    """Plane strain constant strain quadrilateral element."""
+
+    ndir = 3
+    nshr = 1
+
+    def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
+        dNdx = self.shape_gradient(p, xi)
+        B = np.zeros((4, 16))
         B[0, 0::2] = dNdx[0]
         B[1, 1::2] = dNdx[1]
         B[3, 0::2] = dNdx[1]

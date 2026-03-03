@@ -15,7 +15,7 @@ from .typing import DSLoadT
 from .typing import RLoadT
 
 if TYPE_CHECKING:
-    from .cell import Cell
+    from .element import ReferenceElement
 
 
 class Map:
@@ -318,7 +318,7 @@ class Edge:
 @dataclass
 class BlockSpec:
     name: str
-    cell_type: Type["Cell"]
+    cell_type: Type["ReferenceElement"]
     region: RegionSelector | None
     elements: Sequence[int] | None
 

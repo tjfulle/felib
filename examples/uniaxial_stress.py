@@ -20,7 +20,7 @@ def exercise(esize: float = 0.05):
 
     nodes, elements = felib.meshing.plate_with_hole(esize=esize)
     mesh = felib.mesh.Mesh(nodes=nodes, elements=elements)
-    mesh.block(name="Block-1", region=Everywhere(), cell_type=felib.cell.Tri3)
+    mesh.block(name="Block-1", region=Everywhere(), cell_type=felib.element.Tri3)
     mesh.nodeset("Point", region=lambda x, on_boundary: abs(x[0]) < 0.05 and x[1] > 0.999)
     mesh.nodeset("Top", region=lambda x, on_boundary: x[1] > 0.99)
     mesh.sideset("Bottom", region=Bottom())

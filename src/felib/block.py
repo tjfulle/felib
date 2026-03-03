@@ -13,8 +13,8 @@ from .collections import Map
 from .collections import RobinLoad
 
 if TYPE_CHECKING:
-    from .cell import Cell
     from .element import Element
+    from .element import ReferenceElement
     from .material import Material
 
 
@@ -27,10 +27,10 @@ class TopoBlock:
         name: str,
         nodes: list[list[int | float]],
         elements: list[list[int]],
-        cell_type: Type["Cell"],
+        cell_type: Type["ReferenceElement"],
     ) -> None:
         self.name = name
-        self.cell_type = cell_type
+        self.ref_el = cell_type()
 
         connected: set[int] = set([gid for elem in elements for gid in elem[1:]])
         allnodes: set[int] = set([int(node[0]) for node in nodes])
@@ -42,21 +42,21 @@ class TopoBlock:
         self.node_map = Map([int(node[0]) for node in nodes])
         self.elem_map = Map([int(elem[0]) for elem in elements])
 
-        self.coords: NDArray = np.zeros((len(nodes), cell_type.dim), dtype=float)
+        self.coords: NDArray = np.zeros((len(nodes), self.ref_el.ndim), dtype=float)
         for n, node in enumerate(nodes):
             xc = [float(x) for x in node[1:]]
-            if len(xc) != cell_type.dim:
+            if len(xc) != self.ref_el.ndim:
                 raise ValueError(
-                    f"{self}: node {node[0]} has {len(xc)} dims, expected {cell_type.dim}"
+                    f"{self}: node {node[0]} has {len(xc)} dims, expected {self.ref_el.ndim}"
                 )
             self.coords[n] = xc
 
-        self.connect = np.zeros((len(elements), cell_type.nnode), dtype=int)
+        self.connect = np.zeros((len(elements), self.ref_el.nnode), dtype=int)
         for e, elem in enumerate(elements):
             lids = [self.node_map.local(gid) for gid in elem[1:]]
-            if len(lids) != cell_type.nnode:
+            if len(lids) != self.ref_el.nnode:
                 raise ValueError(
-                    f"{self}: element {elem[0]} has {len(lids)} nodes, expected {cell_type.nnode}"
+                    f"{self}: element {elem[0]} has {len(lids)} nodes, expected {self.ref_el.nnode}"
                 )
             self.connect[e] = lids
 

@@ -14,26 +14,19 @@ from numpy.typing import NDArray
 
 from ..constants import T
 from ..material import Material
-from .geom import P3
-from .geom import P4
 from .isop import IsoparametricElement
+from .reference import Quad4
+from .reference import Tri3
 
 
-class DCnD:
-    """
-    Conductive element mixin.
+class DiffusiveContinueElement:
+    """Conductive element mixin."""
 
-    Attributes
-    ----------
-    ndof : int
-        Number of temperature DOFs per node (1 for temperature).
-    """
-
-    ndof: int = 1
-    ndim: int
+    ndir: int
+    nshr: int = 0
 
     def history_variables(self) -> list[str]:
-        if self.ndim == 2:
+        if self.ndir == 2:
             return ["DTx", "DTy", "Qx", "Qy"]
         raise NotImplementedError
 
@@ -93,10 +86,10 @@ class DCnD:
         return D, q
 
 
-class DCP3(P3, DCnD, IsoparametricElement):
+class DCP3(Tri3, DiffusiveContinueElement, IsoparametricElement):
     """3-node constant conductivity triangle element."""
 
-    ndim = 2
+    ndir = 2
     gauss_pts = np.array([[1.0, 1.0], [4.0, 1.0], [1.0, 4.0]], dtype=float) / 6.0
     gauss_wts = np.array([1.0, 1.0, 1.0], dtype=float) / 6.0
     edge_gauss_pts = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)], dtype=float)
@@ -122,9 +115,10 @@ class DCP3(P3, DCnD, IsoparametricElement):
         return B
 
 
-class DCP4(P4, DCnD, IsoparametricElement):
+class DCP4(Quad4, DiffusiveContinueElement, IsoparametricElement):
     """4-node constant conductivity quadrilateral element."""
 
+    ndir = 2
     gauss_pts = np.array([[-1.0, -1.0], [1.0, -1.0], [-1.0, 1.0], [1.0, 1.0]]) / np.sqrt(3.0)
     gauss_wts = np.array([1.0, 1.0, 1.0, 1.0], dtype=float)
     edge_gauss_pts = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)], dtype=float)

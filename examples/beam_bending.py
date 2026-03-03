@@ -20,7 +20,7 @@ def beam_bending():
     mesh = felib.mesh.Mesh(nodes=nodes, elements=elems)
     mesh.nodeset(name="nodeset-1", region=lambda x, on_boundary: on_boundary and x[0] > 9.991)
     mesh.sideset(name="sideset-1", region=lambda x, on_boundary: on_boundary and x[0] < 0.001)
-    mesh.block(name="Block-1", cell_type=felib.cell.Quad4, region=lambda x, on_boundary: True)
+    mesh.block(name="Block-1", cell_type=felib.element.Quad4, region=lambda x, on_boundary: True)
 
     #    mesh = make_mesh()
 
@@ -47,7 +47,6 @@ def beam_bending():
     felib.plotting.mesh_plot_quad4(
         model.coords + scale * u, model.connect, label="FE CPS4 Solution", ax=ax
     )
-
 
     ax.set_aspect("equal")
     plt.legend(loc="best")

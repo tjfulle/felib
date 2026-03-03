@@ -2,18 +2,33 @@ import numpy as np
 from numpy.typing import NDArray
 
 
-class Pn:
+class ReferenceElement:
+    family: str
     edges: NDArray
+    faces: NDArray
     ref_coords: NDArray
+
+    @property
+    def ndim(self) -> int:
+        return self.ref_coords.shape[1]
+
+    @property
+    def nnode(self) -> int:
+        return self.ref_coords.shape[0]
+
+    @property
+    def nedge(self) -> int:
+        return self.edges.shape[0]
+
+    @property
+    def nface(self) -> int:
+        return self.faces.shape[0]
 
     # Geometry-only methods
     def shape(self, xi: NDArray) -> NDArray:
         raise NotImplementedError
 
     def shape_derivative(self, xi: NDArray) -> NDArray:
-        raise NotImplementedError
-
-    def area(self, p: NDArray) -> float:
         raise NotImplementedError
 
     def edge_shape(self, xi: float, n: int) -> NDArray:
@@ -30,8 +45,14 @@ class Pn:
             return np.array([(xi - 0.5), -2.0 * xi, xi + 0.5])
         raise NotImplementedError
 
+    def face_nodes(self, face_no) -> NDArray:
+        return self.faces[face_no]
+
+    def edge_nodes(self, edge_no) -> NDArray:
+        return self.edges[edge_no]
+
     def edge_coords(self, edge_no: int, p: NDArray) -> NDArray:
-        return p[self.edges[edge_no]]
+        return p[self.edge_nodes(edge_no)]
 
     def ref_edge_coords(self, edge_no: int, xi: float) -> NDArray:
         ix = self.edges[edge_no]
@@ -69,10 +90,11 @@ class Pn:
         raise NotImplementedError
 
 
-class P3(Pn):
+class Tri3(ReferenceElement):
     """Linear 3-node triangle"""
 
     family = "TRI3"
+    faces = np.array([[0, 1, 2, 3]], dtype=int)
     edges = np.array([[0, 1], [1, 2], [2, 0]], dtype=int)
     ref_coords = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=float)
 
@@ -83,14 +105,8 @@ class P3(Pn):
     def shape_derivative(self, xi: NDArray) -> NDArray:
         return np.array([[-1.0, 1.0, 0.0], [-1.0, 0.0, 1.0]])
 
-    def area(self, p: NDArray) -> float:
-        xp, yp = p[:, 0], p[:, 1]
-        d = xp[0] * (yp[1] - yp[2]) + xp[1] * (yp[2] - yp[0]) + xp[2] * (yp[0] - yp[1])
-        assert d > 0
-        return d / 2.0
 
-
-class P4(Pn):
+class Quad4(ReferenceElement):
     """Linear 4-node quad
 
     Notes
@@ -108,6 +124,7 @@ class P4(Pn):
     """
 
     family = "QUAD4"
+    faces = np.array([[0, 1, 2, 3, 4]], dtype=int)
     edges = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=int)
     ref_coords = np.array([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]], dtype=float)
 
@@ -130,9 +147,79 @@ class P4(Pn):
         )
         return a / 4.0
 
-    def area(self, p: NDArray) -> float:
-        xp, yp = p[:, 0], p[:, 1]
-        d = (xp[0] * yp[1] - xp[1] * yp[0]) + (xp[1] * yp[2] - xp[2] * yp[1])
-        d += (xp[2] * yp[3] - xp[3] * yp[2]) + (xp[3] * yp[0] - xp[0] * yp[3])
-        assert d > 0
-        return d / 2.0
+
+class Quad8(ReferenceElement):
+    """Quadratic 8-node quad
+
+    Notes
+    -----
+    Node and element face numbering
+
+               [2]
+            3---6---2
+            |       |
+       [3]  7       5 [1]
+            |       |
+            0---4---1
+               [0]
+
+    """
+
+    family = "QUAD8"
+    edges = np.array([[0, 4, 1], [1, 5, 2], [2, 6, 3], [3, 7, 0]], dtype=int)
+    faces = np.array([[0, 1, 2, 3, 4, 5, 6, 7]], dtype=int)
+    ref_coords = np.array(
+        [
+            [-1.0, -1.0],
+            [1.0, -1.0],
+            [1.0, 1.0],
+            [-1.0, 1.0],
+            [0.0, -1.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [-1.0, 0.0],
+        ],
+        dtype=float,
+    )
+
+    def shape(self, xi: NDArray) -> NDArray:
+        s, t = xi
+        N = np.zeros(8, dtype=float)
+        N[0] = 0.25 * (1.0 - s) * (1.0 - t) * (-s - t - 1)
+        N[1] = 0.25 * (1.0 + s) * (1.0 - t) * (s - t - 1)
+        N[2] = 0.25 * (1.0 + s) * (1.0 + t) * (s + t - 1)
+        N[3] = 0.25 * (1.0 - s) * (1.0 + t) * (-s + t - 1)
+        N[4] = 0.5 * (1.0 - s**2) * (1.0 - t)
+        N[5] = 0.5 * (1.0 + s) * (1.0 - t**2)
+        N[6] = 0.5 * (1.0 - s**2) * (1.0 + t)
+        N[7] = 0.5 * (1.0 - s) * (1.0 - t**2)
+        return N
+
+    def shape_derivative(self, xi):
+        s, t = xi
+        dN = np.zeros((2, 8), dtype=float)
+        dN[0, 0] = 0.25 * (1.0 - t) * (2.0 * s + t)
+        dN[1, 0] = 0.25 * (1.0 - s) * (2.0 * t + s)
+
+        dN[0, 1] = 0.25 * (1.0 - t) * (2.0 * s - t)
+        dN[1, 1] = 0.25 * (1.0 + s) * (2.0 * t + s)
+
+        dN[0, 2] = 0.25 * (1.0 + t) * (2.0 * s + t)
+        dN[1, 2] = 0.25 * (1.0 + s) * (2.0 * t + s)
+
+        dN[0, 3] = 0.25 * (1.0 + t) * (2.0 * s - t)
+        dN[1, 3] = 0.25 * (1.0 - s) * (2.0 * t - s)
+
+        dN[0, 4] = -s * (1.0 - t)
+        dN[1, 4] = -0.5 * (1.0 - s**2)
+
+        dN[0, 5] = 0.5 * (1.0 - t**2)
+        dN[1, 5] = -(1.0 + s) * t
+
+        dN[0, 6] = -s * (1.0 + t)
+        dN[1, 6] = 0.5 * (1.0 - s**2)
+
+        dN[0, 7] = -0.5 * (1.0 - t**2)
+        dN[1, 7] = -(1.0 - s) * t
+
+        return dN
