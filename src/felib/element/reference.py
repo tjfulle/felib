@@ -76,8 +76,7 @@ class ReferenceElement:
     def edge_normal(self, edge_no: int, p: NDArray, xi: float = 0.0) -> NDArray:
         t = self.edge_tangent(edge_no, p, xi)
         n = np.array([t[1], -t[0]])
-        n = n / np.linalg.norm(n)
-        return n
+        return n / np.linalg.norm(n)
 
     def edge_centroid(self, edge_no: int, p: NDArray) -> NDArray:
         ix = self.edges[edge_no]

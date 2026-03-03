@@ -37,6 +37,7 @@ class Model:
         self._blocks: list[ElementBlock] = []
         self._node_freedom_table: NDArray = np.empty((0, 0), dtype=int)
         self._node_freedom_types: list[int] = []
+        self._node_freedom_cols: dict[int, int] = {}
         self._block_dof_map: NDArray = np.empty((0, 0), dtype=int)
         self._dof_map: NDArray = np.empty((0, 0), dtype=int)
         self._dof_types: NDArray = np.empty(0, dtype=int)
@@ -58,6 +59,10 @@ class Model:
     @frozen_property
     def node_freedom_types(self) -> list[int]:
         return self._node_freedom_types
+
+    @frozen_property
+    def node_freedom_cols(self) -> dict[int, int]:
+        return self._node_freedom_cols
 
     @frozen_property
     def block_dof_map(self) -> NDArray:
@@ -223,6 +228,8 @@ class _ModelBuilder:
                 1 if the DOF is active at the node, 0 otherwise
             self._node_freedom_types : ndarray[int] of length n_active_dofs
                 Physical DOF type corresponding to each column (Ux, Uy, ..., T)
+            self._node_freedom_cols : dict[int, int] of length n_active_dofs
+                Physical DOF type corresponding to each column (Ux, Uy, ..., T)
             self.ndof : int
                 Total number of active DOFs in the model
         """
@@ -261,6 +268,7 @@ class _ModelBuilder:
         # -----------------------------
         self.model._node_freedom_table = node_sig_full[:, active_cols].copy()
         self.model._node_freedom_types = active_cols.tolist()
+        self.model._node_freedom_cols = {t: i for i, t in enumerate(active_cols)}
         self.model._ndof = int(self.model._node_freedom_table.sum())
 
     def build_dof_map(self) -> None:
@@ -308,7 +316,7 @@ class _ModelBuilder:
                 gid = block.node_map[i]
                 lid = self.model.mesh.node_map.local(gid)
                 for dof_type in block.element.node_freedom_table[0]:
-                    col = self.model._node_freedom_types.index(dof_type)
+                    col = self.model._node_freedom_cols[dof_type]
                     gdof = self.model._dof_map[lid, col]
                     self.model._block_dof_map[blockno, local_dof_idx] = gdof
                     local_dof_idx += 1

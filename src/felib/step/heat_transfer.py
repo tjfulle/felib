@@ -91,7 +91,7 @@ class HeatTransferStep(Step):
                 lids = [model.node_map.local(gid) for gid in nodes]
             for lid in lids:
                 for dof in dofs:
-                    i = model.node_freedom_types.index(dof)
+                    i = model.node_freedom_cols[dof]
                     DOF = model.dof_map[lid, i]
                     seen[DOF] = value
         dbcs = [(k, seen[k]) for k in sorted(seen)]
