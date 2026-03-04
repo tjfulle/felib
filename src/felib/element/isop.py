@@ -265,6 +265,7 @@ class IsoparametricElement(Element):
         """
         dNdxi = self.shape_derivative(xi)
         dxdxi = np.dot(dNdxi, p)
+        # dNdx = dNdxi * (dxdxi)^(-1)
         dNdx = np.dot(np.linalg.inv(dxdxi), dNdxi)
         return dNdx
 

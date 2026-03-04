@@ -175,7 +175,7 @@ class Quad4(ReferenceElement):
     """
 
     family = "QUAD4"
-    faces = np.array([[0, 1, 2, 3, 4]], dtype=int)
+    faces = np.array([[0, 1, 2, 3]], dtype=int)
     edges = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=int)
     ref_coords = np.array([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]], dtype=float)
 
