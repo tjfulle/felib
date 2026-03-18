@@ -2,3 +2,5 @@
 venv
 *.pyc
 *.egg-info
+.venv/
+.venv-wsl/

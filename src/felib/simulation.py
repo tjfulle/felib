@@ -15,6 +15,7 @@ from .step import CompiledStep
 from .step import DirectStep
 from .step import HeatTransferStep
 from .step import StaticStep
+from .step import ExplicitStep
 from .step import Step
 from .typing import DLoadT
 from .typing import DSLoadT
@@ -55,6 +56,14 @@ class Simulation:
     ) -> StaticStep:
         name = name or f"step-{len(self.steps)}"
         step = StaticStep(name=name, ndim=self.model.ndim, period=period, **options)
+        self.steps.append(step)
+        return step
+    
+    def explicit_step(
+        self, name: str | None = None, period: float = 1.0, **options: Any
+    ) -> ExplicitStep:
+        name = name or f"step-{len(self.steps)}"
+        step = ExplicitStep(name=name, ndim=self.model.ndim, period=period, **options)
         self.steps.append(step)
         return step
 
