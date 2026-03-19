@@ -6,6 +6,8 @@ from .heat_transfer import CompiledHeatTransferStep
 from .heat_transfer import HeatTransferStep
 from .static import CompiledStaticStep
 from .static import StaticStep
+from .explicit import CompiledExplicitStep
+from .explicit import ExplicitStep
 
 __all__ = [
     "CompiledDirectStep",
@@ -14,6 +16,8 @@ __all__ = [
     "HeatTransferStep",
     "StaticStep",
     "CompiledStaticStep",
+    "ExplicitStep",
+    "CompiledExplicitStep",
     "CompiledStep",
     "Step",
 ]
