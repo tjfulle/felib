@@ -291,7 +291,12 @@ class CPE4H(CPE4):
     ndir = 3
     nshr = 1
     npressure = 1
-    
+
+    def history_variables(self) -> list[str]:
+        names = super().history_variables()
+        names.extend(["p", "ev"])
+        return names
+
     def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
         dNdx = self.shape_gradient(p, xi)
         B = np.zeros((4, 8))
