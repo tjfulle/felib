@@ -485,10 +485,10 @@ class IsoparametricElement(Element):
         try:
             pressure_dofs = -np.linalg.solve(Kpp, Rp)
             ke = Kuu - Kup @ np.linalg.solve(Kpp, Kpu)
-        except np.linalg.LinAlgError as e:
+        except np.linalg.LinAlgError as err:
             raise RuntimeError(
                 f"Local pressure condensation failed for {self.__class__.__name__}"
-            ) from e
+            ) from err
         re = Ru + Kup @ pressure_dofs
 
         ntens = len(strains[0]) if strains else 0

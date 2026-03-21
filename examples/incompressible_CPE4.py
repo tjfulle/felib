@@ -10,11 +10,11 @@ def exercise(nx: int = 8, ny: int = 8, poissons_ratio: float = 0.499, uy: float 
     nodes, elements = felib.meshing.rectmesh((0.0, 1.0, 0.0, 1.0), nx=nx, ny=ny)
     mesh = felib.mesh.Mesh(nodes=nodes, elements=elements)
     mesh.block("Block-1", region=lambda element: True, cell_type=felib.element.Quad4)
-    mesh.nodeset("Bottom", region=lambda node: np.isclose(node.x[1], 0.0))
-    mesh.nodeset("Top", region=lambda node: np.isclose(node.x[1], 1.0))
+    mesh.nodeset("Bottom", region=lambda node: bool(np.isclose(node.x[1], 0.0)))
+    mesh.nodeset("Top", region=lambda node: bool(np.isclose(node.x[1], 1.0)))
     mesh.nodeset(
         "Bottom Left",
-        region=lambda node: np.isclose(node.x[0], 0.0) and np.isclose(node.x[1], 0.0),
+        region=lambda node: bool(np.isclose(node.x[0], 0.0) and np.isclose(node.x[1], 0.0)),
     )
 
     model = felib.model.Model(mesh, name="incompressible_CPE4")
