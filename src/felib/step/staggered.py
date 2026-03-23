@@ -2,9 +2,7 @@ from .base import Step
 from .static import StaticStep
 from .heat_transfer import HeatTransferStep
 
-from .base import Step
-from .heat_transfer import HeatTransferStep
-from .static import StaticStep
+
 
 
 class StaggeredStep(Step):
