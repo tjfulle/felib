@@ -33,6 +33,7 @@ class IsoparametricElement(Element):
     edge_gauss_pts: NDArray
     uses_local_pressure: bool = False
     npressure: int = 0
+    nlgeom: bool = False
 
     # —————————————————————————————————————————————————————————————
     # Integration point accessors
