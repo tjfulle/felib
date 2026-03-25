@@ -285,6 +285,19 @@ class IsoparametricElement(Element):
         N = self.shape(xi)
         return np.array([np.dot(N, p[:, i]) for i in range(p.shape[1])], dtype=float)
 
+
+    # TODO: Utility to compute interpolation weights at arbitrary physical points
+    # For MPC slave nodes we need shape function values at slave physical
+    # coordinates relative to a master element. The usual operation is:
+    #   - find xi such that interpolate(master_p, xi) ~= x_slave
+    #   - compute N = shape(xi)
+    #   - slave_disp = N @ master_element_dofs
+    #
+    # To support this add (or implement elsewhere) an inverse mapping utility:
+    #   `map_physical_to_ref(p, x)` -> xi
+    # This can be implemented per element using Newton iterations solving
+    # `interpolate(p, xi) - x = 0` with the `shape_gradient`/`jacobian` helpers.
+
     def edge_jacobian(self, edge_no: int, p: NDArray, xi: float) -> float:
         """
         Compute 1D edge Jacobian (|dx/dξ|) for edge integration.

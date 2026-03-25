@@ -26,6 +26,15 @@ class Model:
         self.mesh.freeze()
         self._frozen = False
         self._blocks: list[ElementBlock] = []
+        # TODO: Constraint registration
+        # The Model should expose an API to register constraints (MPCs,
+        # multipoint constraints, contact definitions) prior to solving.
+        # Suggested additions:
+        # - `self._constraints: list` to store constraint objects
+        # - `add_mpc_constraint(self, mpc)` to attach an `MPCConstraint`
+        #   that will be consulted by the Step/Assembler before solving.
+        # Steps should then query the model for active constraints and either
+        # reduce the system using `T` or assemble augmented matrices.
 
     def freeze(self) -> None:
         if not self._frozen:

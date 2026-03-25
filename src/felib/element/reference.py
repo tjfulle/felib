@@ -68,6 +68,18 @@ class ReferenceElement:
         N = self.shape(st)
         return np.dot(N[ix], p[ix])
 
+
+# TODO: Add physical->reference mapping utility
+# The ReferenceElement currently provides `interpolate` and `ref_edge_coords`
+# to go from reference -> physical. For MPC interpolation weights we often
+# need the inverse: given a physical point `x` on/near the master element,
+# find the reference coordinate `xi` such that `interpolate(p, xi) ~= x`.
+#
+# Suggest adding:
+#   `def map_physical_to_ref(self, p: NDArray, x: NDArray) -> NDArray`
+# which can be implemented with a small Newton solver using `shape` and
+# `shape_derivative` / jacobian utilities supplied above.
+
     def edge_tangent(self, edge_no: int, p: NDArray, xi: float) -> NDArray:
         ix = self.edges[edge_no]
         dN = self.edge_shape_derivative(xi, len(ix))

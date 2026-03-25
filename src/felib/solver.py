@@ -64,6 +64,16 @@ class DirectSolver(Solver):
         )
 
 
+# TODO: Solver awareness of reduced systems
+# Solvers currently accept already-reduced or augmented matrices. When using
+# homogeneous-MPCs we will provide a reduced system K_red/f_red to the solver.
+# The solver should remain agnostic, but the calling Step must:
+#  - pass K_red, f_red when using `T`-based reduction, or
+#  - pass augmented K/R when using Lagrange multipliers.
+# After the solver returns `x_red` the Step must expand to full `u_full`
+# via `u_full = T @ x_red` before updating `model.u` and post-processing.
+
+
 class NonlinearNewtonSolver(Solver):
     def __call__(  # type: ignore
         self,

@@ -329,6 +329,24 @@ class _MeshBuilder:
             node.on_boundary = True
         return
 
+    # TODO: Tied-contact / MPC interface detection
+    # The mesh builder is a convenient place to detect slave/master interfaces
+    # once the mesh topology is known. Suggested additions:
+    # - After computing sides and side centroids, detect pairs of opposing
+    #   sides/nodes that should be tied (e.g. via proximity, sideset names,
+    #   or user-specified node/side sets).
+    # - For each slave node record:
+    #       * slave global node id
+    #       * master element id (block, elem) and local element nodes
+    #       * physical projection point and local reference coordinate xi
+    # - Store these mappings in `self.metadata['mpc_interfaces']` so later
+    #   the `MPCConstraint` can build interpolation weights using the
+    #   corresponding reference element shape functions.
+    #
+    # Implementation hint: use `ReferenceElement.interpolate` and add an
+    # inverse mapping utility (physical -> reference) in ReferenceElement so
+    # you can evaluate shape functions at arbitrary slave physical points.
+
     def nodeset(self, name: str, region: Callable[[collections.Node], bool] | NodeSelector) -> None:
         nodesets = self.metadata["nodesets"]
         if name in [ns[0] for ns in nodesets.values()]:

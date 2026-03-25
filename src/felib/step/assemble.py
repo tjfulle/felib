@@ -159,6 +159,22 @@ class AssemblyKernel:
         if neq == 0:
             return K_ff, R_f
 
+        # NOTE: Constraint handling currently uses an augmented Lagrange
+        # formulation (C, r). To support homogeneous-MPC tied contact we
+        # should add an alternate path here that applies a transformation
+        # `T` produced by an `MPCConstraint` object instead of forming the
+        # saddle-point system. Suggested logic:
+        #
+        #   if mpc is present:
+        #       T = mpc.compute_transform(dof_manager)
+        #       K_red = T.T @ K_full @ T
+        #       R_red = T.T @ R_full
+        #       return K_red, R_red
+        #
+        # This minimizes code changes in assembly: compute full K, R as now
+        # and reduce them using `T` before handing them to the solver. Keep
+        # the Lagrange-multiplier (augmented) path unchanged as a fallback.
+
         C, r = build_linear_constraint(ndof, self.equations)
         C_f = C[:, fdofs]
         g = np.dot(C, u) - r

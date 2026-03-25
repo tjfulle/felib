@@ -188,6 +188,28 @@ class DOFManager:
         dof_types[:] = node_types_expanded.ravel()[mask]
         self._dof_types = dof_types
 
+    # TODO: Homogeneous MPC support
+    # The current DOFManager builds a full/global DOF numbering for all active
+    # DOFs in the model. To support homogeneous-MPC tied contact we will need
+    # a mechanism to represent a reduced DOF space (masters) and to map/expand
+    # slave DOFs using a transformation matrix `T` such that
+    #
+    #   u_full = T @ u_reduced
+    #
+    # Suggested extension points (add methods here later):
+    # - `build_mpc_map(mpc_constraints)` : compute reduced DOF indices and
+    #    bookkeeping for master DOFs. Should not change existing `dof_map`
+    #    but provide a `reduced_dof_map` view and mapping helpers.
+    # - `expand_solution(u_reduced, T)` : produce the full-length displacement
+    #    vector from a reduced solution (callable by the Step after solve).
+    # - `reduced_size()` : return number of DOFs in reduced system.
+    #
+    # Important considerations:
+    # - DOF ordering (ux, uy, ...) must be consistent when building `T`.
+    # - Keep `dof_map` (full indexing) intact so existing code that expects
+    #   full DOF indices continues to work; provide the reduced mapping as
+    #   an auxiliary structure to the solver/assembly routines.
+
     def build_block_dof_maps(self, model: "Model") -> None:
         """
         Build a precomputed block DOF map:
