@@ -64,7 +64,3 @@ def analytic_solution(mesh: felib.mesh.Mesh) -> NDArray:
             - P * L**3 / (3 * E * II)
         )
     return u
-
-
-if __name__ == "__main__":
-    sys.exit(beam_bending())
