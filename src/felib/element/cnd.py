@@ -269,6 +269,8 @@ class CPS4(CPX4):
         B[2, 1::2] = dNdx[0]
         return B
 
+class CPS4NL(CPS4):
+    nlgeom = True
 
 class CPE4(CPX4):
     """Plane strain constant strain quadrilateral element."""
@@ -285,6 +287,8 @@ class CPE4(CPX4):
         B[3, 1::2] = dNdx[0]
         return B
 
+class CPE4NL(CPE4):
+    nlgeom = True
 
 class CPE4H(CPE4):
     """Plane strain quadrilateral with hybrid u-p fomulation, constant pressure."""
