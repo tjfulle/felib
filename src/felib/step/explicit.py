@@ -36,6 +36,13 @@ if TYPE_CHECKING:
 class ExplicitStep(Step):
     def __init__(self, name: str, ndim: int, period: float = 1.0, **options: Any) -> None:
         super().__init__(name=name, ndim=ndim, period=period)
+
+        dt = options.pop("dt", period)
+        self.dt = float(dt)
+
+        if self.dt <= 0.0:
+            raise ValueError("Explicit step dt must be positive")
+
         self.solver_opts = options
 
     def boundary(
@@ -102,6 +109,7 @@ class ExplicitStep(Step):
             name=self.name,
             parent=parent,
             period=self.period,
+            dt=self.dt,
             dbcs=self.compile_dbcs(model, dof_manager),
             nbcs=self.compile_nbcs(model, dof_manager),
             dloads=self.compile_dloads(model),
@@ -112,7 +120,12 @@ class ExplicitStep(Step):
         )
 
     def node_variables(self) -> list[NodeVariable]:
-        variables: list[NodeVariable] = [SpatialVectorVar("u"), SpatialVectorVar("f")]
+        variables: list[NodeVariable] = [
+            SpatialVectorVar("u"),
+            SpatialVectorVar("v"),
+            SpatialVectorVar("a"), 
+            SpatialVectorVar("f"),
+        ]
         return variables
 
     def compile_dbcs(self, model: "Model", dof_manager: "DOFManager") -> list[tuple[int, float]]:
@@ -247,6 +260,7 @@ class ExplicitStep(Step):
 
 @dataclass
 class CompiledExplicitStep(CompiledStep):
+    dt: float = 0.0
     solver_options: dict[str, Any] = field(default_factory=dict)
 
     def solve(
@@ -268,7 +282,7 @@ class CompiledExplicitStep(CompiledStep):
 
         increment = 1
         time = (0, self.start)
-        dt = self.period
+        dt = self.dt
         kernel = AssemblyKernel(
             fun,
             u0,
