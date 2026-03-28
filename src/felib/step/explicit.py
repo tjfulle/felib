@@ -288,6 +288,16 @@ class CompiledExplicitStep(CompiledStep):
         K = np.zeros((ndof, ndof), dtype=float)
         R = np.zeros(ndof, dtype=float)
 
+        dofs, blocks, _ = args
+
+        mdiag = np.zeros(ndof, dtype=float)
+        for b, block in enumerate(blocks):
+            bft = dofs.block_freedom_table(b)
+            mdiag[bft] += block.lumped_mass()
+
+        if np.any(mdiag[fdofs] <= 0.0):
+            raise RuntimeError("Non-positive lumped mass on free DOFs")
+
         for increment in range(1, ninc + 1):
             t_old = self.start + (increment - 1) * dt
             t_new = self.start + increment * dt
@@ -322,7 +332,7 @@ class CompiledExplicitStep(CompiledStep):
             K = kernel.stiff
 
             # TODO: replace with lumped-mass acceleration update.
-            a[fdofs] = 0.0
+            a[fdofs] = -R[fdofs] / mdiag[fdofs]
 
             # TODO: replace with central-difference update.
             v[fdofs] += dt * a[fdofs]
