@@ -20,7 +20,6 @@ from ..collections import Solution
 from ..collections import TractionLoad
 from ..constants import NodeVariable
 from ..constants import SpatialVectorVar
-from ..solver import NonlinearNewtonSolver
 from ..typing import DLoadT
 from ..typing import DSLoadT
 from ..typing import RLoadT
@@ -123,7 +122,7 @@ class ExplicitStep(Step):
         variables: list[NodeVariable] = [
             SpatialVectorVar("u"),
             SpatialVectorVar("v"),
-            SpatialVectorVar("a"), 
+            SpatialVectorVar("a"),
             SpatialVectorVar("f"),
         ]
         return variables
@@ -273,46 +272,66 @@ class CompiledExplicitStep(CompiledStep):
         ddofs = self.ddofs
         ndof = len(u0)
         fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
-        nf = len(fdofs)
         neq = len(self.equations) if self.equations else 0
 
-        x0 = u0[fdofs]
-        if neq > 0:
-            x0 = np.hstack([x0, np.zeros(neq)])
+        if self.dt <= 0.0:
+            raise ValueError("Explicit step dt must be positive")
 
-        increment = 1
-        time = (0, self.start)
-        dt = self.dt
-        kernel = AssemblyKernel(
-            fun,
-            u0,
-            args=args,
-            step=self.number,
-            increment=increment,
-            time=time,
-            dt=dt,
-            ddofs=ddofs,
-            dvals=self.dvals[1, :],
-            nbcs=self.nbcs,
-            dloads=self.dloads,
-            dsloads=self.dsloads,
-            rloads=self.rloads,
-            equations=self.equations,
-        )
-        solver = NonlinearNewtonSolver()
-        state = solver(
-            kernel,
-            x0,
-            atol=self.solver_options.get("atol"),
-            rtol=self.solver_options.get("rtol"),
-            maxiter=self.solver_options.get("maxiter"),
-        )
+        ninc = max(1, int(np.ceil(self.period / self.dt)))
+        dt = self.period / ninc
+
         u = u0.copy()
-        u[fdofs] = state.x[:nf]
-        u[ddofs] = self.dvals[1, :]
+        v = np.zeros_like(u0)
+        a = np.zeros_like(u0)
+        lagrange = np.zeros(neq, dtype=float)
 
-        R = kernel.resid
-        K = kernel.stiff
+        K = np.zeros((ndof, ndof), dtype=float)
+        R = np.zeros(ndof, dtype=float)
+
+        for increment in range(1, ninc + 1):
+            t_old = self.start + (increment - 1) * dt
+            t_new = self.start + increment * dt
+            time = (t_old, t_new)
+
+            alpha = increment / ninc
+            dvals = self.dvals[0, :] + alpha * (self.dvals[1, :] - self.dvals[0, :])
+
+            x = u[fdofs]
+            if neq > 0:
+                x = np.hstack([x, lagrange])
+
+            kernel = AssemblyKernel(
+                fun,
+                u,
+                args=args,
+                step=self.number,
+                increment=increment,
+                time=time,
+                dt=dt,
+                ddofs=ddofs,
+                dvals=dvals,
+                nbcs=self.nbcs,
+                dloads=self.dloads,
+                dsloads=self.dsloads,
+                rloads=self.rloads,
+                equations=self.equations,
+            )
+
+            kernel(x)
+            R = kernel.resid
+            K = kernel.stiff
+
+            # TODO: replace with lumped-mass acceleration update.
+            a[fdofs] = 0.0
+
+            # TODO: replace with central-difference update.
+            v[fdofs] += dt * a[fdofs]
+            u[fdofs] += dt * v[fdofs]
+
+            u[ddofs] = dvals
+            v[ddofs] = 0.0
+            a[ddofs] = 0.0
+
         react = np.zeros_like(R)
         react[ddofs] = R[ddofs]
         self.solution = Solution(
@@ -320,11 +339,10 @@ class CompiledExplicitStep(CompiledStep):
             force=R[:ndof],
             dofs=u[:ndof],
             react=react,
-            lagrange_multipliers=state.x[nf:],
-            iterations=state.iterations,
+            lagrange_multipliers=lagrange,
+            iterations=ninc,
         )
 
-        f = np.dot(K[:ndof, :ndof], u[:ndof])
         return u[:ndof]
 
 
