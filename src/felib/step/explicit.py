@@ -298,6 +298,37 @@ class CompiledExplicitStep(CompiledStep):
         if np.any(mdiag[fdofs] <= 0.0):
             raise RuntimeError("Non-positive lumped mass on free DOFs")
 
+        dvals0 = self.dvals[0, :]
+
+        x = u[fdofs]
+        if neq > 0:
+            x = np.hstack([x, lagrange])
+
+        kernel = AssemblyKernel(
+            fun,
+            u,
+            args=args,
+            step=self.number,
+            increment=0,
+            time=(self.start, self.start),
+            dt=dt,
+            ddofs=ddofs,
+            dvals=dvals0,
+            nbcs=self.nbcs,
+            dloads=self.dloads,
+            dsloads=self.dsloads,
+            rloads=self.rloads,
+            equations=self.equations,
+        )
+
+        kernel(x)
+        R = kernel.resid
+        K = kernel.stiff
+        a[fdofs] = -R[fdofs] / mdiag[fdofs]
+
+        v_half = np.zeros_like(u0)
+        v_half[fdofs] = v[fdofs] - 0.5 * dt * a[fdofs]
+
         for increment in range(1, ninc + 1):
             t_old = self.start + (increment - 1) * dt
             t_new = self.start + increment * dt
@@ -331,16 +362,16 @@ class CompiledExplicitStep(CompiledStep):
             R = kernel.resid
             K = kernel.stiff
 
-            # TODO: replace with lumped-mass acceleration update.
             a[fdofs] = -R[fdofs] / mdiag[fdofs]
 
-            # TODO: replace with central-difference update.
-            v[fdofs] += dt * a[fdofs]
-            u[fdofs] += dt * v[fdofs]
+            v_half[fdofs] += dt * a[fdofs]
+            u[fdofs] += dt * v_half[fdofs]
+            v[fdofs] = v_half[fdofs] - 0.5 * dt * a[fdofs]
 
             u[ddofs] = dvals
             v[ddofs] = 0.0
             a[ddofs] = 0.0
+            v_half[ddofs] = 0.0
 
         react = np.zeros_like(R)
         react[ddofs] = R[ddofs]
