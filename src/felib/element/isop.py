@@ -157,6 +157,35 @@ class IsoparametricElement(Element):
         """
         ...
 
+    def green_lagrange_2d(self, p: NDArray, u: NDArray, xi: NDArray) -> NDArray:
+        dNdx = self.shape_gradient(p, xi)   # shape: (2, nnode)
+
+        ux = u[0::2]
+        uy = u[1::2]
+
+        gradu = np.array([
+            [dNdx[0] @ ux, dNdx[1] @ ux],
+            [dNdx[0] @ uy, dNdx[1] @ uy],
+        ], dtype=float)
+
+        F = np.eye(2) + gradu
+        E = 0.5 * (F.T @ F - np.eye(2))
+        return E
+
+    def pack_green_lagrange(self, E: NDArray) -> NDArray:
+        if self.ndir == 2 and self.nshr == 1:   # plane stress
+            return np.array([E[0, 0], E[1, 1], 2.0 * E[0, 1]], dtype=float)
+        if self.ndir == 3 and self.nshr == 1:   # plane strain
+            return np.array([E[0, 0], E[1, 1], 0.0, 2.0 * E[0, 1]], dtype=float)
+        raise NotImplementedError
+    
+    def pk2_voigt_to_tensor(self, s: NDArray) -> NDArray:
+        if self.ndir == 2 and self.nshr == 1:  # plane stress
+            return np.array([[s[0], s[2]], [s[2], s[1]]], dtype=float)
+        if self.ndir == 3 and self.nshr == 1:  # plane strain
+            return np.array([[s[0], s[3]], [s[3], s[1]]], dtype=float)
+        raise NotImplementedError
+
     @abstractmethod
     def ref_edge_coords(self, edge_no: int, xi: float) -> NDArray:
         """
@@ -587,24 +616,58 @@ class IsoparametricElement(Element):
             )
         # ————————————————— Volume integration —————————————————
         for ipt, (w, xi) in enumerate(self.integration_points()):
-            J = self.jacobian(p, xi)
-            B = self.bmatrix(p, xi)
-            P = self.pmatrix(xi)
+            Pmat = self.pmatrix(xi)
             x = self.interpolate(p, xi)
 
+            # Keep this if you still want the current tangent structure for now
+            B = self.bmatrix(p, xi)
+
             # — Internal contribution
-            e = np.dot(B, u)
-            de = np.dot(B, du) / dt
-            D, s = self.update_state(
-                material, step, increment, time, dt, eleno, p, u, e, de, pdata[ipt]
-            )
-            ke += w * J * np.dot(np.dot(B.T, D), B)
-            re += w * J * np.dot(B.T, s)
+            if not self.nlgeom:
+                e = np.dot(B, u)
+                de = np.dot(B, du) / dt
+
+                D, s = self.update_state(
+                    material, step, increment, time, dt, eleno, p, u, e, de, pdata[ipt]
+                )
+
+                ke += w * J * np.dot(np.dot(B.T, D), B)
+                re += w * J * np.dot(B.T, s)
+
+            else:
+                # --- Large strain kinematics ---
+                E = self.green_lagrange_2d(p, u, xi)
+                e = self.pack_green_lagrange(E)
+
+                E_prev = self.green_lagrange_2d(p, u - du, xi)
+                e_prev = self.pack_green_lagrange(E_prev)
+                de = (e - e_prev) / dt
+
+                # --- Material returns PK2 stress S and tangent D = dS/dE ---
+                D, s = self.update_state(
+                    material, step, increment, time, dt, eleno, p, u, e, de, pdata[ipt]
+                )
+
+                # --- Convert PK2 stress to first Piola-Kirchhoff stress ---
+                F, _ = self.deformation_gradient_2d(p, u, xi)
+                S = self.pk2_voigt_to_tensor(s)
+                Pi = F @ S
+
+                # --- Internal force from Piola stress ---
+                dNdx = self.shape_gradient(p, xi)
+                for a in range(self.nnode):
+                    gradNa = dNdx[:, a]
+                    fe_a = Pi @ gradNa
+                    ia = self.dof_per_node * a
+                    re[ia : ia + self.dof_per_node] += w * J * fe_a
+
+                # --- Tangent kept as your current approximation for now ---
+                ke += w * J * np.dot(np.dot(B.T, D), B)
 
             # — Body forces
             for dload in dloads:
                 value = dload(step, increment, time, dt, eleno, ipt, x.tolist())
-                re -= w * J * np.dot(P, value)
+                re -= w * J * np.dot(Pmat, value)
 
         # ————————————————— Surface loads —————————————————
         for edge_no, dsload in dsloads:

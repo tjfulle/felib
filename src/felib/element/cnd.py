@@ -272,6 +272,33 @@ class CPS4(CPX4):
 class CPS4NL(CPS4):
     nlgeom = True
 
+    def update_state(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        e: NDArray,
+        de: NDArray,
+        hsv: NDArray,
+    ) -> tuple[NDArray, NDArray]:
+        temp = dtemp = 0.0
+        n = len(self.history_variables())
+
+        # Here, e is Green-Lagrange strain E
+        D, S = material.eval(
+            hsv[n:], e, de, time, dt, temp, dtemp,
+            self.ndir, self.nshr, eleno, step, increment
+        )
+
+        hsv[: self.ntens] = e       # store E
+        hsv[self.ntens : 2 * self.ntens] = S   # store PK2 stress
+        return D, S
+
 class CPE4(CPX4):
     """Plane strain constant strain quadrilateral element."""
 
@@ -289,6 +316,33 @@ class CPE4(CPX4):
 
 class CPE4NL(CPE4):
     nlgeom = True
+
+    def update_state(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        e: NDArray,
+        de: NDArray,
+        hsv: NDArray,
+    ) -> tuple[NDArray, NDArray]:
+        temp = dtemp = 0.0
+        n = len(self.history_variables())
+
+        # Here, e is Green-Lagrange strain E
+        D, S = material.eval(
+            hsv[n:], e, de, time, dt, temp, dtemp,
+            self.ndir, self.nshr, eleno, step, increment
+        )
+
+        hsv[: self.ntens] = e       # store E
+        hsv[self.ntens : 2 * self.ntens] = S   # store PK2 stress
+        return D, S
 
 class CPE4H(CPE4):
     """Plane strain quadrilateral with hybrid u-p fomulation, constant pressure."""
