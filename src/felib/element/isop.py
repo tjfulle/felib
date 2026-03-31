@@ -186,49 +186,101 @@ class IsoparametricElement(Element):
             return np.array([[s[0], s[3]], [s[3], s[1]]], dtype=float)
         raise NotImplementedError
 
-    @abstractmethod
-    def ref_edge_coords(self, edge_no: int, xi: float) -> NDArray:
+    def piola_tangent_2d(
+        self,
+        p: NDArray,
+        u: NDArray,
+        xi: NDArray,
+        w: float,
+        J: float,
+        s_voigt: NDArray,
+        D_voigt: NDArray,
+    ) -> NDArray:
         """
-        Reference-space coordinates along an edge.
+        Consistent tangent for 2D nonlinear element residual using Piola stress.
 
-        Args:
-            edge_no: Edge index
-            xi: 1D local coordinate
-
-        Returns:
-            Reference coordinate on the edge
+        Returns the element stiffness contribution for one integration point.
         """
-        ...
+        dNdx = self.shape_gradient(p, xi)
+        F, _ = self.deformation_gradient_2d(p, u, xi)
+        S = self.pk2_voigt_to_tensor(s_voigt)
 
-    @abstractmethod
-    def edge_tangent(self, edge_no: int, p: NDArray, xi: float) -> NDArray:
-        """
-        Tangent vector along a physical edge.
+        ndof = self.nnode * self.dof_per_node
+        K = np.zeros((ndof, ndof), dtype=float)
 
-        Args:
-            edge_no: Edge index
-            p: Physical coordinates
-            xi: Edge Gauss coordinate
+        for b in range(self.nnode):
+            Gb = dNdx[:, b]  # [dN_b/dx, dN_b/dy]
 
-        Returns:
-            Tangent vector at that location
-        """
-        ...
+            for beta in range(2):
+                # dF from one nodal dof perturbation
+                dF = np.zeros((2, 2), dtype=float)
+                dF[beta, :] = Gb
 
-    @abstractmethod
-    def edge_normal(self, edge_no: int, p: NDArray, xi: float) -> NDArray:
-        """
-        Surface normal vector on an edge.
+                # dE = 0.5*(F^T dF + dF^T F)
+                dE = 0.5 * (F.T @ dF + dF.T @ F)
+                de = self.pack_green_lagrange(dE)
 
-        Args:
-            edge_no: Edge index
-            p: Physical coordinates
-            xi: Edge Gauss coordinate
+                # dS from material tangent
+                dS_voigt = D_voigt @ de
+                dS = self.pk2_voigt_to_tensor(dS_voigt)
 
-        Returns:
-            Normal vector
-        """
-        ...
+                # dP = dF S + F dS
+                dP = dF @ S + F @ dS
+
+                # contribution to all test-node forces
+                for a in range(self.nnode):
+                    Ga = dNdx[:, a]
+                    df = dP @ Ga
+
+                    ia = self.dof_per_node * a
+                    ib = self.dof_per_node * b + beta
+                    K[ia : ia + 2, ib] += w * J * df
+
+        return K
+
+        @abstractmethod
+        def ref_edge_coords(self, edge_no: int, xi: float) -> NDArray:
+            """
+            Reference-space coordinates along an edge.
+
+            Args:
+                edge_no: Edge index
+                xi: 1D local coordinate
+
+            Returns:
+                Reference coordinate on the edge
+            """
+            ...
+
+        @abstractmethod
+        def edge_tangent(self, edge_no: int, p: NDArray, xi: float) -> NDArray:
+            """
+            Tangent vector along a physical edge.
+
+            Args:
+                edge_no: Edge index
+                p: Physical coordinates
+                xi: Edge Gauss coordinate
+
+            Returns:
+                Tangent vector at that location
+            """
+            ...
+
+        @abstractmethod
+        def edge_normal(self, edge_no: int, p: NDArray, xi: float) -> NDArray:
+            """
+            Surface normal vector on an edge.
+
+            Args:
+                edge_no: Edge index
+                p: Physical coordinates
+                xi: Edge Gauss coordinate
+
+            Returns:
+                Normal vector
+            """
+            ...
 
     @abstractmethod
     def interpolate_edge(self, edge_no: int, p: NDArray, xi: float) -> NDArray:
@@ -635,7 +687,7 @@ class IsoparametricElement(Element):
                 re += w * J * np.dot(B.T, s)
 
             else:
-                # --- Large strain kinematics ---
+                # Large strain kinematics
                 E = self.green_lagrange_2d(p, u, xi)
                 e = self.pack_green_lagrange(E)
 
@@ -643,26 +695,23 @@ class IsoparametricElement(Element):
                 e_prev = self.pack_green_lagrange(E_prev)
                 de = (e - e_prev) / dt
 
-                # --- Material returns PK2 stress S and tangent D = dS/dE ---
                 D, s = self.update_state(
                     material, step, increment, time, dt, eleno, p, u, e, de, pdata[ipt]
                 )
 
-                # --- Convert PK2 stress to first Piola-Kirchhoff stress ---
+                # Convert PK2 stress to tensor and build Piola stress
                 F, _ = self.deformation_gradient_2d(p, u, xi)
                 S = self.pk2_voigt_to_tensor(s)
-                Pi = F @ S
+                P = F @ S
 
-                # --- Internal force from Piola stress ---
+                # Residual from Piola stress
                 dNdx = self.shape_gradient(p, xi)
                 for a in range(self.nnode):
-                    gradNa = dNdx[:, a]
-                    fe_a = Pi @ gradNa
                     ia = self.dof_per_node * a
-                    re[ia : ia + self.dof_per_node] += w * J * fe_a
+                    re[ia : ia + 2] += w * J * (P @ dNdx[:, a])
 
-                # --- Tangent kept as your current approximation for now ---
-                ke += w * J * np.dot(np.dot(B.T, D), B)
+                # Tangent from linearization of the Piola residual
+                ke += self.piola_tangent_2d(p, u, xi, w, J, s, D)
 
             # — Body forces
             for dload in dloads:
