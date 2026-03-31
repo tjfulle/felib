@@ -186,6 +186,24 @@ class IsoparametricElement(Element):
             return np.array([[s[0], s[3]], [s[3], s[1]]], dtype=float)
         raise NotImplementedError
 
+    def deformation_gradient_2d(self, p: NDArray, u: NDArray, xi: NDArray) -> tuple[NDArray, NDArray]:
+        dNdx = self.shape_gradient(p, xi)
+
+        ux = u[0::2]
+        uy = u[1::2]
+
+        grad_u = np.array(
+            [
+                [dNdx[0] @ ux, dNdx[1] @ ux],
+                [dNdx[0] @ uy, dNdx[1] @ uy],
+            ],
+            dtype=float,
+        )
+
+        F = np.eye(2) + grad_u
+        E = 0.5 * (F.T @ F - np.eye(2))
+        return F, E
+
     def piola_tangent_2d(
         self,
         p: NDArray,
@@ -668,6 +686,7 @@ class IsoparametricElement(Element):
             )
         # ————————————————— Volume integration —————————————————
         for ipt, (w, xi) in enumerate(self.integration_points()):
+            J = self.jacobian(p, xi) 
             Pmat = self.pmatrix(xi)
             x = self.interpolate(p, xi)
 

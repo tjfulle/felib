@@ -8,6 +8,8 @@ from .cnd import CPS4
 from .cnd import CPS8
 from .dcnd import DCP3
 from .dcnd import DCP4
+from .cnd import CPE4NL
+from .cnd import CPS4NL
 from .isop import IsoparametricElement
 from .reference import Quad4
 from .reference import Quad8
@@ -19,10 +21,12 @@ __all__ = [
     "IsoparametricElement",
     "CPE3",
     "CPE4",
+    "CPE4NL",
     "CPE4H",
     "CPE8",
     "CPS3",
     "CPS4",
+    "CPS4NL",
     "CPS8",
     "DCP3",
     "DCP4",
