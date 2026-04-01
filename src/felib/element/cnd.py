@@ -219,10 +219,14 @@ class CPE3(CPX3):
 
     def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
         dNdx = self.shape_gradient(p, xi)
+        N = self.shape(xi)
+        r = np.dot(N, p[:, 0])
+
         B = np.zeros((4, 6))
-        B[0, 0::2] = dNdx[0]
-        B[1, 1::2] = dNdx[1]
-        B[3, 0::2] = dNdx[1]
+        B[0, 0::2] = dNdx[0]   # e_rr
+        B[1, 1::2] = dNdx[1]   # e_zz
+        B[2, 0::2] = N / r     # e_tt = u_r / r
+        B[3, 0::2] = dNdx[1]   # gamma_rz
         B[3, 1::2] = dNdx[0]
         return B
 
@@ -278,10 +282,14 @@ class CPE4(CPX4):
 
     def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
         dNdx = self.shape_gradient(p, xi)
+        N = self.shape(xi)
+        r = np.dot(N, p[:, 0])
+
         B = np.zeros((4, 8))
-        B[0, 0::2] = dNdx[0]
-        B[1, 1::2] = dNdx[1]
-        B[3, 0::2] = dNdx[1]
+        B[0, 0::2] = dNdx[0]   # e_rr
+        B[1, 1::2] = dNdx[1]   # e_zz
+        B[2, 0::2] = N / r     # e_tt = u_r / r
+        B[3, 0::2] = dNdx[1]   # gamma_rz
         B[3, 1::2] = dNdx[0]
         return B
 
@@ -341,9 +349,13 @@ class CPE8(CPX8):
 
     def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
         dNdx = self.shape_gradient(p, xi)
+        N = self.shape(xi)
+        r = np.dot(N, p[:, 0])
+
         B = np.zeros((4, 16))
-        B[0, 0::2] = dNdx[0]
-        B[1, 1::2] = dNdx[1]
-        B[3, 0::2] = dNdx[1]
+        B[0, 0::2] = dNdx[0]   # e_rr
+        B[1, 1::2] = dNdx[1]   # e_zz
+        B[2, 0::2] = N / r     # e_tt = u_r / r
+        B[3, 0::2] = dNdx[1]   # gamma_rz
         B[3, 1::2] = dNdx[0]
         return B

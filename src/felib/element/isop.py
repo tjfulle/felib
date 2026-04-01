@@ -400,20 +400,21 @@ class IsoparametricElement(Element):
             B = self.bmatrix(p, xi)
             P = self.pmatrix(xi)
             x = self.interpolate(p, xi)
-
+            r= x[0]
+            wt = w * J * 2.0 * np.pi * r
             # — Internal contribution
             e = np.dot(B, u)
             de = np.dot(B, du) / dt
             D, s = self.update_state(
                 material, step, increment, time, dt, eleno, p, u, e, de, pdata[ipt]
             )
-            ke += w * J * np.dot(np.dot(B.T, D), B)
-            re += w * J * np.dot(B.T, s)
+            ke += wt * np.dot(np.dot(B.T, D), B)
+            re += wt * np.dot(B.T, s)
 
             # — Body forces
             for dload in dloads:
                 value = dload(step, increment, time, dt, eleno, ipt, x.tolist())
-                re -= w * J * np.dot(P, value)
+                re -= wt * np.dot(P, value)
 
         # ————————————————— Surface loads —————————————————
         for edge_no, dsload in dsloads:
