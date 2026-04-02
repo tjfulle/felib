@@ -177,7 +177,7 @@ class ExplicitStep(Step):
             elif isinstance(elements, int):
                 lids = [model.elem_map.local(elements)]
             else:
-                lids = [model.node_map.local(gid) for gid in elements]
+                lids = [model.elem_map.local(gid) for gid in elements]
             if ltype == "gravity":
                 pass
             elif ltype == "dload":
@@ -229,8 +229,8 @@ class ExplicitStep(Step):
                 raise ValueError(f"side set {sideset} not defined")
             for ele_no, edge_no in model.sidesets[sideset]:
                 block_no = model.block_elem_map[ele_no]
-                block = model.mesh.blocks[block_no]
-                gid = block.elem_map[ele_no]
+                block = model.blocks[block_no]
+                gid = model.elem_map[ele_no]
                 lid = block.elem_map.local(gid)
                 rload = RobinLoad(edge=edge_no, H=H, u0=u0)
                 rloads[block_no][lid].append(rload)
@@ -392,5 +392,8 @@ class CompiledExplicitStep(CompiledStep):
 
 
 def normalize(a: Sequence[float]) -> NDArray:
-    v = np.asarray(a)
-    return v / np.linalg.norm(v)
+    v = np.asarray(a, dtype=float)
+    norm = np.linalg.norm(v)
+    if norm == 0.0:
+        raise ValueError("Direction vector must be non-zero")
+    return v / norm
