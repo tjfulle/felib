@@ -13,36 +13,56 @@ mu = 10000.0
 nu = 0.0
 E = 2.0 * mu * (1.0 + nu)
 
-
 def beam_bending() -> None:
-
     q4 = beam_bending_quad4()
-    q8 = beam_bending_quad8()
-
     u4 = q4.ndata["u"]
-    u8 = q8.ndata["u"]
+
+
+    print("max |u| =", np.max(np.linalg.norm(u4, axis=1)))
 
     scale = 0.25 / np.max(np.abs(u4))
-    ua = analytic_solution(q4.model.mesh)
-
     x4 = q4.model.coords
     c4 = q4.model.connect
+
     _, ax = felib.plotting.mesh_plot(
-        felib.element.Quad4(), x4 + scale * ua, c4, label="Analytic solution", color="r"
+        felib.element.Quad4(),
+        x4 + scale * u4,
+        c4,
+        label="FE CPS4 Explicit Solution",
     )
-    felib.plotting.mesh_plot(
-        felib.element.Quad4(), x4 + scale * u4, c4, label="FE CPS4 Solution", ax=ax
-    )
-
-    x8 = q8.model.coords
-    c8 = q8.model.connect
-    felib.plotting.mesh_plot(
-        felib.element.Quad8(), x8 + scale * u8, c8, label="FE CPS8 Solution", ax=ax, color="b"
-    )
-
     ax.set_aspect("equal")
     plt.legend(loc="best")
     plt.show()
+
+# def beam_bending() -> None:
+
+#     q4 = beam_bending_quad4()
+#     q8 = beam_bending_quad8()
+
+#     u4 = q4.ndata["u"]
+#     u8 = q8.ndata["u"]
+
+#     scale = 0.25 / np.max(np.abs(u4))
+#     ua = analytic_solution(q4.model.mesh)
+
+#     x4 = q4.model.coords
+#     c4 = q4.model.connect
+#     _, ax = felib.plotting.mesh_plot(
+#         felib.element.Quad4(), x4 + scale * ua, c4, label="Analytic solution", color="r"
+#     )
+#     felib.plotting.mesh_plot(
+#         felib.element.Quad4(), x4 + scale * u4, c4, label="FE CPS4 Solution", ax=ax
+#     )
+
+#     x8 = q8.model.coords
+#     c8 = q8.model.connect
+#     felib.plotting.mesh_plot(
+#         felib.element.Quad8(), x8 + scale * u8, c8, label="FE CPS8 Solution", ax=ax, color="b"
+#     )
+
+#     ax.set_aspect("equal")
+#     plt.legend(loc="best")
+#     plt.show()
 
 
 def beam_bending_quad4() -> felib.simulation.Simulation:
@@ -55,9 +75,9 @@ def beam_bending_quad4() -> felib.simulation.Simulation:
     model = felib.model.Model(mesh, name="shear_locking")
     model.assign_properties(block="Block-1", element=felib.element.CPS4(), material=m)
     simulation = felib.simulation.Simulation(model)
-    step = simulation.explicit_step()
+    step = simulation.explicit_step(period=1.0e-2, dt=1.0e-6)
     step.boundary(nodes="ihi", dofs=[X, Y], value=0.0)
-    step.traction(sideset="ilo", magnitude=1, direction=[0, -1])
+    step.traction(sideset="ilo", magnitude=1e6, direction=[0, -1])
     simulation.run()
     return simulation
 
@@ -72,7 +92,7 @@ def beam_bending_quad8() -> felib.simulation.Simulation:
     model = felib.model.Model(mesh, name="shear_locking")
     model.assign_properties(block="Block-1", element=felib.element.CPS8(), material=m)
     simulation = felib.simulation.Simulation(model)
-    step = simulation.explicit_step()
+    step = simulation.explicit_step(period=1.0e-4)
     step.boundary(nodes="ihi", dofs=[X, Y], value=0.0)
     step.traction(sideset="ilo", magnitude=1, direction=[0, -1])
     simulation.run()

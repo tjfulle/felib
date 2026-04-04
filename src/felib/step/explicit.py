@@ -36,10 +36,10 @@ class ExplicitStep(Step):
     def __init__(self, name: str, ndim: int, period: float = 1.0, **options: Any) -> None:
         super().__init__(name=name, ndim=ndim, period=period)
 
-        dt = options.pop("dt", period)
-        self.dt = float(dt)
+        dt = options.pop("dt", None)
+        self.dt = None if dt is None else float(dt)
 
-        if self.dt <= 0.0:
+        if self.dt is not None and self.dt <= 0.0:
             raise ValueError("Explicit step dt must be positive")
 
         self.solver_opts = options
@@ -259,8 +259,33 @@ class ExplicitStep(Step):
 
 @dataclass
 class CompiledExplicitStep(CompiledStep):
-    dt: float = 0.0
+    dt: float | None = None
     solver_options: dict[str, Any] = field(default_factory=dict)
+
+    def estimate_stable_dt(self, blocks: list[Any]) -> float:
+        dt_min = np.inf
+
+        for block in blocks:
+            material = block.material
+            density = material.density
+            youngs_modulus = material.youngs_modulus
+
+            wave_speed = np.sqrt(youngs_modulus / density)
+
+            coords = block.coords
+            conn = block.connect
+
+            for elem_nodes in conn:
+                x = coords[np.asarray(elem_nodes) - 1]
+                edge_lengths = np.linalg.norm(x - np.roll(x, -1, axis=0), axis=1)
+                char_length = np.min(edge_lengths)
+                dt_elem = char_length / wave_speed
+                dt_min = min(dt_min, dt_elem)
+
+        if not np.isfinite(dt_min) or dt_min <= 0.0:
+            raise RuntimeError("Could not estimate a stable explicit time step")
+
+        return 0.5 * dt_min
 
     def solve(
         self,
@@ -274,10 +299,19 @@ class CompiledExplicitStep(CompiledStep):
         fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
         neq = len(self.equations) if self.equations else 0
 
-        if self.dt <= 0.0:
+        dofs, blocks, _ = args
+
+        if self.dt is None:
+            dt = self.estimate_stable_dt(blocks)
+        else:
+            dt = self.dt
+
+        if dt <= 0.0:
             raise ValueError("Explicit step dt must be positive")
 
-        ninc = max(1, int(np.ceil(self.period / self.dt)))
+        print(f"Using explicit dt = {dt:.6e}")
+
+        ninc = max(1, int(np.ceil(self.period / dt)))
         dt = self.period / ninc
 
         u = u0.copy()
@@ -287,8 +321,6 @@ class CompiledExplicitStep(CompiledStep):
 
         K = np.zeros((ndof, ndof), dtype=float)
         R = np.zeros(ndof, dtype=float)
-
-        dofs, blocks, _ = args
 
         mdiag = np.zeros(ndof, dtype=float)
         for b, block in enumerate(blocks):
@@ -326,6 +358,7 @@ class CompiledExplicitStep(CompiledStep):
         K = kernel.stiff
         a[fdofs] = -R[fdofs] / mdiag[fdofs]
 
+        # Central difference uses velocity at the half step
         v_half = np.zeros_like(u0)
         v_half[fdofs] = v[fdofs] - 0.5 * dt * a[fdofs]
 
@@ -366,6 +399,8 @@ class CompiledExplicitStep(CompiledStep):
 
             v_half[fdofs] += dt * a[fdofs]
             u[fdofs] += dt * v_half[fdofs]
+
+            # Recover velocity at the full time step for output
             v[fdofs] = v_half[fdofs] - 0.5 * dt * a[fdofs]
 
             u[ddofs] = dvals
@@ -375,6 +410,19 @@ class CompiledExplicitStep(CompiledStep):
 
         react = np.zeros_like(R)
         react[ddofs] = R[ddofs]
+        ndim = ndata.dof_manager.ndim
+        nnode = ndata.nnode
+
+        u_node = u[: nnode * ndim].reshape((nnode, ndim))
+        v_node = v[: nnode * ndim].reshape((nnode, ndim))
+        a_node = a[: nnode * ndim].reshape((nnode, ndim))
+        f_node = R[: nnode * ndim].reshape((nnode, ndim))
+
+        ndata.data[1, :, ndata.vectors["u"]] = u_node.T
+        ndata.data[1, :, ndata.vectors["v"]] = v_node.T
+        ndata.data[1, :, ndata.vectors["a"]] = a_node.T
+        ndata.data[1, :, ndata.vectors["f"]] = f_node.T
+
         self.solution = Solution(
             stiff=K[:ndof, :ndof],
             force=R[:ndof],
