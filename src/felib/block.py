@@ -152,6 +152,16 @@ class ElementBlock:
             K[np.ix_(eft, eft)] += ke
             R[eft] += re
         return K, R
+    
+    def lumped_mass(self) -> NDArray:
+        m = np.zeros(self.ndof, dtype=float)
+
+        for nodes in self.connect:
+            eft = self.element_freedom_table(nodes)
+            me = self.element.lumped_mass(self.material, self.coords[nodes])
+            m[eft] += me
+
+        return m
 
     def element_freedom_table(self, nodes: NDArray) -> list[int]:
         dof_per_node = self.element.dof_per_node
