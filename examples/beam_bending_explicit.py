@@ -3,6 +3,7 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
+from matplotlib.animation import FuncAnimation
 
 import felib
 
@@ -17,7 +18,18 @@ def beam_bending() -> None:
     q4 = beam_bending_quad4()
     u4 = q4.ndata["u"]
 
+    coords = q4.model.coords
+    tip_node = np.argmin(np.linalg.norm(coords - np.array([0.0, 0.15]), axis=1))
 
+    cstep = q4.csteps[-1]
+    times = np.array(cstep.time_history)
+    u_hist = np.array(cstep.u_history)
+    uy_tip = u_hist[:, 2 * tip_node + 1]
+    ke_hist = np.array(cstep.kinetic_energy_history)
+    ie_hist = np.array(cstep.internal_energy_history)
+
+    print("tracked node index =", tip_node)
+    print("num history frames =", len(times))
     print("max |u| =", np.max(np.linalg.norm(u4, axis=1)))
 
     scale = 0.25 / np.max(np.abs(u4))
@@ -32,6 +44,56 @@ def beam_bending() -> None:
     )
     ax.set_aspect("equal")
     plt.legend(loc="best")
+    plt.show()
+
+    # plt.figure()
+    # plt.plot(times, uy_tip)
+    # plt.xlabel("Time")
+    # plt.ylabel("Vertical displacement")
+    # plt.title("Beam tip displacement vs time")
+    # plt.show()
+
+    plt.figure()
+    plt.plot(times, ke_hist)
+    plt.xlabel("Time")
+    plt.ylabel("Kinetic energy")
+    plt.title("Kinetic energy vs time")
+    plt.show()
+
+    plt.figure()
+    plt.plot(times, ie_hist)
+    plt.xlabel("Time")
+    plt.ylabel("Internal energy")
+    plt.title("Internal energy vs time")
+    plt.show()
+
+    plt.figure()
+    plt.plot(times, ke_hist + ie_hist)
+    plt.xlabel("Time")
+    plt.ylabel("Total energy")
+    plt.title("Total energy vs time")
+    plt.show()
+
+    u_frames = np.array(cstep.u_history)
+
+    fig_anim, ax_anim = plt.subplots()
+
+    def update(frame: int):
+        ax_anim.clear()
+        u_frame = u_frames[frame].reshape((-1, 2))
+        felib.plotting.mesh_plot(
+            felib.element.Quad4(),
+            x4 + scale * u_frame,
+            c4,
+            ax=ax_anim,
+            label=f"Frame {frame + 1}/{len(u_frames)}",
+        )
+        ax_anim.set_aspect("equal")
+        ax_anim.set_title("Beam deformation history")
+        ax_anim.legend(loc="best")
+
+    anim = FuncAnimation(fig_anim, update, frames=len(u_frames), interval=100, repeat=True)
+    _ = anim
     plt.show()
 
 # def beam_bending() -> None:
@@ -75,7 +137,12 @@ def beam_bending_quad4() -> felib.simulation.Simulation:
     model = felib.model.Model(mesh, name="shear_locking")
     model.assign_properties(block="Block-1", element=felib.element.CPS4(), material=m)
     simulation = felib.simulation.Simulation(model)
-    step = simulation.explicit_step(period=1.0e-2, dt=1.0e-6)
+    step = simulation.explicit_step(
+        period=1.0e-2,
+        dt=1.0e-6,
+        damping=1.0,
+        history_interval=100,
+    )
     step.boundary(nodes="ihi", dofs=[X, Y], value=0.0)
     step.traction(sideset="ilo", magnitude=1e6, direction=[0, -1])
     simulation.run()

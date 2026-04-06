@@ -42,6 +42,18 @@ class ExplicitStep(Step):
         if self.dt is not None and self.dt <= 0.0:
             raise ValueError("Explicit step dt must be positive")
 
+        damping = options.pop("damping", 0.0)
+        self.damping = float(damping)
+
+        if self.damping < 0.0:
+            raise ValueError("Explicit step damping must be non-negative")
+
+        history_interval = options.pop("history_interval", 0)
+        self.history_interval = int(history_interval)
+
+        if self.history_interval < 0:
+            raise ValueError("Explicit step history_interval must be non-negative")
+
         self.solver_opts = options
 
     def boundary(
@@ -109,6 +121,8 @@ class ExplicitStep(Step):
             parent=parent,
             period=self.period,
             dt=self.dt,
+            damping=self.damping,
+            history_interval=self.history_interval,
             dbcs=self.compile_dbcs(model, dof_manager),
             nbcs=self.compile_nbcs(model, dof_manager),
             dloads=self.compile_dloads(model),
@@ -260,7 +274,13 @@ class ExplicitStep(Step):
 @dataclass
 class CompiledExplicitStep(CompiledStep):
     dt: float | None = None
+    damping: float = 0.0
+    history_interval: int = 0
     solver_options: dict[str, Any] = field(default_factory=dict)
+    time_history: list[float] = field(default_factory=list)
+    u_history: list[NDArray] = field(default_factory=list)
+    kinetic_energy_history: list[float] = field(default_factory=list)
+    internal_energy_history: list[float] = field(default_factory=list)
 
     def estimate_stable_dt(self, blocks: list[Any]) -> float:
         dt_min = np.inf
@@ -319,6 +339,12 @@ class CompiledExplicitStep(CompiledStep):
         a = np.zeros_like(u0)
         lagrange = np.zeros(neq, dtype=float)
 
+        self.time_history = []
+        self.u_history = []
+        self.kinetic_energy_history = []
+        self.internal_energy_history = []
+
+
         K = np.zeros((ndof, ndof), dtype=float)
         R = np.zeros(ndof, dtype=float)
 
@@ -356,7 +382,7 @@ class CompiledExplicitStep(CompiledStep):
         kernel(x)
         R = kernel.resid
         K = kernel.stiff
-        a[fdofs] = -R[fdofs] / mdiag[fdofs]
+        a[fdofs] = (-R[fdofs] - self.damping * v[fdofs]) / mdiag[fdofs]
 
         # Central difference uses velocity at the half step
         v_half = np.zeros_like(u0)
@@ -395,8 +421,7 @@ class CompiledExplicitStep(CompiledStep):
             R = kernel.resid
             K = kernel.stiff
 
-            a[fdofs] = -R[fdofs] / mdiag[fdofs]
-
+            a[fdofs] = (-R[fdofs] - self.damping * v[fdofs]) / mdiag[fdofs]
             v_half[fdofs] += dt * a[fdofs]
             u[fdofs] += dt * v_half[fdofs]
 
@@ -407,6 +432,15 @@ class CompiledExplicitStep(CompiledStep):
             v[ddofs] = 0.0
             a[ddofs] = 0.0
             v_half[ddofs] = 0.0
+
+            if self.history_interval > 0:
+                if increment % self.history_interval == 0 or increment == ninc:
+                    ke = 0.5 * np.sum(mdiag * v**2)
+                    ie = 0.5 * float(u @ (K @ u))
+                    self.time_history.append(t_new)
+                    self.u_history.append(u.copy())
+                    self.kinetic_energy_history.append(ke)
+                    self.internal_energy_history.append(ie)
 
         react = np.zeros_like(R)
         react[ddofs] = R[ddofs]
