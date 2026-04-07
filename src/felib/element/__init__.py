@@ -12,6 +12,8 @@ from .reference import Quad4
 from .reference import Quad8
 from .reference import ReferenceElement
 from .reference import Tri3
+from .cpnt import CPnT4E
+from .cpnt import CPnT4S
 
 __all__ = [
     "Element",
@@ -28,4 +30,6 @@ __all__ = [
     "Quad8",
     "ReferenceElement",
     "Tri3",
+    "CPnT4S",
+    "CPnT4E"
 ]
