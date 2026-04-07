@@ -13,6 +13,7 @@ from .step import DirectStep
 from .step import HeatTransferStep
 from .step import StaticStep
 from .step import Step
+from .step.staggered import StaggeredStep
 
 if TYPE_CHECKING:
     from .model import Model
@@ -63,6 +64,13 @@ class Simulation:
     def heat_transfer_step(self, name: str | None = None, period: float = 1.0) -> HeatTransferStep:
         name = name or f"step-{len(self.steps)}"
         step = HeatTransferStep(name=name, period=period)
+        self.steps.append(step)
+        return step
+    def staggered_step(
+    self, name: str | None = None, period: float = 1.0, **options: Any
+) -> StaggeredStep:
+        name = name or f"step-{len(self.steps)}"
+        step = StaggeredStep(name=name, period=period, **options)
         self.steps.append(step)
         return step
 
