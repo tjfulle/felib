@@ -296,7 +296,7 @@ class _ModelBuilder:
         # DOFs associated with displacment
         dof_types = np.zeros(global_dofs.size, dtype=int)
         node_types_expanded = np.tile(self.model._node_freedom_types, (nnode, 1))
-        dof_types[:] = node_types_expanded.ravel()[flat_mask]
+        dof_types[:] = node_types_expanded.ravel()[flat_mask.astype(bool)]
         self.model._dof_types = dof_types
 
     def build_block_dof_map(self) -> None:
