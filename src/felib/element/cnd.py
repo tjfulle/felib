@@ -443,3 +443,107 @@ class CPE8(CPX8):
         B[3, 0::2] = dNdx[1]
         B[3, 1::2] = dNdx[0]
         return B
+
+
+class CPS4I(CPS4):
+    """
+    Quad4 with incompatible modes (shear improved).
+
+    - Full integration (2x2)
+    - Uses 2 internal incompatible DOFs
+    - Static condensation applied as a correction to Kdd
+    """
+
+    # ------------------------------------------------------------
+    # Main eval with static condensation correction
+    # ------------------------------------------------------------
+    def eval(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time,
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        du: NDArray,
+        pdata: NDArray,
+        dloads=None,
+        dsloads=None,
+        rloads=None,
+    ):
+        # --- get standard stiffness + all load contributions ---
+        hsv = pdata.copy()
+        ke, re = super().eval(
+            material, step, increment, time, dt,
+            eleno, p, u, du, pdata,
+            dloads=dloads, dsloads=dsloads, rloads=rloads
+        )
+
+        ndof = self.nnode * self.dof_per_node
+        na = 2  # incompatible DOFs
+
+        Kda = np.zeros((ndof, na), dtype=float)
+        Kaa = np.zeros((na, na), dtype=float)
+
+        # --------------------------------------------------------
+        # Second loop: build coupling terms
+        # --------------------------------------------------------
+        for ipt, (w, xi) in enumerate(self.integration_points()):
+            J = self.jacobian(p, xi)
+            B = self.bmatrix(p, xi)
+            G = self.gmatrix(p, xi)
+
+            # consistent strain state
+            e = np.dot(B, u)
+            de = np.dot(B, du)
+
+            D, _ = self.update_state(
+                material,
+                step,
+                increment,
+                time,
+                dt,
+                eleno,
+                p,
+                u,
+                e,
+                de,
+                hsv[ipt],
+            )
+
+            # assemble coupling blocks
+            Bt = B.T
+            Gt = G.T
+
+            Kda += w * J * np.dot(np.dot(Bt, D), G)
+            Kaa += w * J * np.dot(np.dot(Gt, D), G)
+
+        # --------------------------------------------------------
+        # Static condensation: K = Kdd - Kda Kaa^{-1} Kda^T
+        # --------------------------------------------------------
+        Kcorr = np.dot(np.dot(Kda, np.linalg.inv(Kaa)), Kda.T)
+        ke -= Kcorr
+
+        return ke, re
+
+    def gmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
+        """
+        Construct incompatible strain-displacement matrix G.
+
+        Returns shape: (3, 2)
+        """
+        r, s = xi
+
+        G = np.zeros((3, 2), dtype=float)
+
+        # Normal components
+        G[0, 0] = r
+        G[1, 1] = s
+
+        # Shear component (key for shear locking)
+        G[2, 0] = s
+        G[2, 1] = r
+
+        return G

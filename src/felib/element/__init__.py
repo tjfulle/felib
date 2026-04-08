@@ -5,6 +5,7 @@ from .cnd import CPE4R
 from .cnd import CPE8
 from .cnd import CPS3
 from .cnd import CPS4
+from .cnd import CPS4I
 from .cnd import CPS8
 from .dcnd import DCP3
 from .dcnd import DCP4
@@ -23,6 +24,7 @@ __all__ = [
     "CPE8",
     "CPS3",
     "CPS4",
+    "CPS4I",
     "CPS8",
     "DCP3",
     "DCP4",
