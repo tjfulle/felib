@@ -41,6 +41,10 @@ def gauss2d(n: int) -> tuple[NDArray, NDArray]:
     return pts, wts
 
 
+def gauss1x1() -> tuple[NDArray, NDArray]:
+    return gauss2d(1)
+
+
 def gauss2x2() -> tuple[NDArray, NDArray]:
     return gauss2d(2)
 
