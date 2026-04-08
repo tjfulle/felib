@@ -21,6 +21,7 @@ CPS4, CPE4
     Plane stress and plane strain 4‑node quadrilaterals.
 """
 
+from typing import TYPE_CHECKING
 from typing import Sequence
 
 import numpy as np
@@ -33,6 +34,11 @@ from .isop import IsoparametricElement
 from .reference import Quad4
 from .reference import Quad8
 from .reference import Tri3
+
+if TYPE_CHECKING:
+    from ..collections import DistributedLoad
+    from ..collections import DistributedSurfaceLoad
+    from ..collections import RobinLoad
 
 
 class ContinuumElement:
@@ -284,6 +290,96 @@ class CPE4(CPX4):
         B[3, 0::2] = dNdx[1]
         B[3, 1::2] = dNdx[0]
         return B
+
+
+class CPE4R(CPS4):
+    """Plane strain constant strain quadrilateral element, reduced integration"""
+
+    gauss_pts, gauss_wts = gauss.gauss1x1()
+    hg_alpha: float = 0.1
+
+    def eval(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        du: NDArray,
+        pdata: NDArray,
+        dloads: list["DistributedLoad"] | None = None,
+        dsloads: list[tuple[int, "DistributedSurfaceLoad"]] | None = None,
+        rloads: list["RobinLoad"] | None = None,
+    ) -> tuple[NDArray, NDArray]:
+        ke, re = super().eval(
+            material,
+            step,
+            increment,
+            time,
+            dt,
+            eleno,
+            p,
+            u,
+            du,
+            pdata,
+            dloads=dloads,
+            dsloads=dsloads,
+            rloads=rloads,
+        )
+        khg, rhg = self.hourglass_terms(p, u)
+        ke += khg
+        re += rhg
+        return ke, re
+
+    def hourglass_terms(self, p, u):
+        ndof = self.nnode * self.dof_per_node
+        Khg = np.zeros((ndof, ndof))
+        Rhg = np.zeros(ndof)
+        xi = np.zeros(2)
+        J = self.jacobian(p, xi)
+        for h in self.hourglass_vectors(p):
+            q = np.dot(h, u)
+            Khg += np.outer(h, h)
+            Rhg += q * h
+        scale = self.hg_alpha * J
+        Khg *= scale
+        Rhg *= scale
+        return Khg, Rhg
+
+    def hourglass_vectors(self, p: NDArray) -> list[NDArray]:
+
+        # shape gradients at center
+        xi = np.zeros(2)
+        dNdx = self.shape_gradient(p, xi)  # (2, 4)
+
+        # canonical scalar patterns (node space)
+        patterns = [
+            np.array([ 1, -1,  1, -1], dtype=float),
+            np.array([ 1,  1, -1, -1], dtype=float),
+        ]
+
+        H = []
+
+        for g in patterns:
+            g = g.copy()
+            # ---- projection: remove strain-producing part ----
+            for i in range(dNdx.shape[0]):  # x,y directions
+                xi_i = np.dot(g, p[:, i])  # same as old code
+                for a in range(len(g)):
+                    g[a] -= xi_i * dNdx[i, a]
+            # normalize
+            nrm = np.linalg.norm(g)
+            if nrm > 1e-12:
+                g /= nrm
+            # expand to DOFs (u,v)
+            h = np.zeros(2 * len(g))
+            h[0::2] = g
+            h[1::2] = g
+            H.append(h)
+        return H
 
 
 class CPX8(Quad8, ContinuumElement, IsoparametricElement):

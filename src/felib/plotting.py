@@ -59,10 +59,12 @@ def mesh_plot_quad4(
     ax: Axes | None | None = None,
     label: str | None = None,
     color: str = "k",
+    lw: float = 0.6,
+    ls: str = "-",
 ) -> tuple[Figure | SubFigure, Axes]:
     from .element import Quad4
 
-    return mesh_plot(Quad4(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color)
+    return mesh_plot(Quad4(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color, lw=lw, ls=ls)
 
 
 def mesh_plot_quad8(
@@ -72,10 +74,12 @@ def mesh_plot_quad8(
     ax: Axes | None | None = None,
     label: str | None = None,
     color: str = "k",
+    lw: float = 0.6,
+    ls: str = "-",
 ) -> tuple[Figure | SubFigure, Axes]:
     from .element import Quad8
 
-    return mesh_plot(Quad8(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color)
+    return mesh_plot(Quad8(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color, lw=lw, ls=ls)
 
 
 def mesh_plot(
@@ -86,6 +90,8 @@ def mesh_plot(
     ax: Axes | None | None = None,
     label: str | None = None,
     color: str = "k",
+    lw: float = 0.6,
+    ls: str = "-",
 ) -> tuple[Figure | SubFigure, Axes]:
     """
     Plot FE mesh connectivity with correct element edges.
@@ -111,7 +117,7 @@ def mesh_plot(
             if ix in seen:
                 continue
             edge_pts = np.array([element.interpolate_edge(edge_no, pe, x) for x in linspace])
-            ax.plot(edge_pts[:, 0], edge_pts[:, 1], color=color, linewidth=0.6, label=label)
+            ax.plot(edge_pts[:, 0], edge_pts[:, 1], color=color, linewidth=lw, label=label, ls=ls)
             label = None
             seen.add(ix)
     return fig, ax

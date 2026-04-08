@@ -1,6 +1,7 @@
 from .base import Element
 from .cnd import CPE3
 from .cnd import CPE4
+from .cnd import CPE4R
 from .cnd import CPE8
 from .cnd import CPS3
 from .cnd import CPS4
@@ -18,6 +19,7 @@ __all__ = [
     "IsoparametricElement",
     "CPE3",
     "CPE4",
+    "CPE4R",
     "CPE8",
     "CPS3",
     "CPS4",
