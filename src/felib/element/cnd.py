@@ -220,10 +220,18 @@ class CPE3(CPX3):
     def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
         dNdx = self.shape_gradient(p, xi)
         B = np.zeros((4, 6))
-        B[0, 0::2] = dNdx[0]
-        B[1, 1::2] = dNdx[1]
-        B[3, 0::2] = dNdx[1]
+        B[0, 0::2] = dNdx[0]   # e_rr
+        B[1, 1::2] = dNdx[1]   # e_zz
+        B[3, 0::2] = dNdx[1]   # gamma_rz
         B[3, 1::2] = dNdx[0]
+        # Axisymmetric hoop strain contribution: epsilon_theta = u_r / r
+        if getattr(self, "axisymmetric", False):
+            N = self.shape(xi)
+            x = self.interpolate(p, xi)
+            r = float(x[0]) if x.size > 0 else 0.0
+            if r <= 0.0:
+                r = 1e-12
+            B[2, 0::2] = N.ravel() / r
         return B
 
 
@@ -283,9 +291,59 @@ class CPE4(CPX4):
         B[1, 1::2] = dNdx[1]
         B[3, 0::2] = dNdx[1]
         B[3, 1::2] = dNdx[0]
+        if getattr(self, "axisymmetric", False):
+            N = self.shape(xi)
+            x = self.interpolate(p, xi)
+            r = float(x[0]) if x.size > 0 else 0.0
+            if r <= 0.0:
+                r = 1e-12
+            B[2, 0::2] = N.ravel() / r
+        return B
+class CPE4H(CPE4):
+    """Plane strain quadrilateral with hybrid u-p fomulation, constant pressure."""
+
+    uses_local_pressure = True
+    ndir = 3
+    nshr = 1
+    npressure = 1
+
+    def history_variables(self) -> list[str]:
+        names = super().history_variables()
+        names.extend(["p", "ev"])
+        return names
+
+    def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
+        dNdx = self.shape_gradient(p, xi)
+        B = np.zeros((4, 8))
+        B[0, 0::2] = dNdx[0]
+        B[1, 1::2] = dNdx[1]
+        B[3, 0::2] = dNdx[1]
+        B[3, 1::2] = dNdx[0]
+        if getattr(self, "axisymmetric", False):
+            N = self.shape(xi)
+            x = self.interpolate(p, xi)
+            r = float(x[0]) if x.size > 0 else 0.0
+            if r <= 0.0:
+                r = 1e-12
+            B[2, 0::2] = N.ravel() / r
         return B
 
+    def bmatrix_vol(self, p: NDArray, xi: NDArray) -> NDArray:
+        dNdx = self.shape_gradient(p, xi)
+        Bv = np.zeros((1, 8))
+        Bv[0, 0::2] = dNdx[0, :]
+        Bv[0, 1::2] = dNdx[1, :]
+        if getattr(self, "axisymmetric", False):
+            N = self.shape(xi)
+            x = self.interpolate(p, xi)
+            r = float(x[0]) if x.size > 0 else 0.0
+            if r <= 0.0:
+                r = 1e-12
+            Bv[0, 0::2] += N.ravel() / r
+        return Bv
 
+    def pressure_shape(self, xi: NDArray) -> NDArray:
+        return np.ones((1, self.npressure), dtype=float)
 class CPX8(Quad8, ContinuumElement, IsoparametricElement):
     """
     Base 8 node quadrilateral element
@@ -346,4 +404,35 @@ class CPE8(CPX8):
         B[1, 1::2] = dNdx[1]
         B[3, 0::2] = dNdx[1]
         B[3, 1::2] = dNdx[0]
+        if getattr(self, "axisymmetric", False):
+            N = self.shape(xi)
+            x = self.interpolate(p, xi)
+            r = float(x[0]) if x.size > 0 else 0.0
+            if r <= 0.0:
+                r = 1e-12
+            B[2, 0::2] = N.ravel() / r
         return B
+
+
+class CAX3(CPE3):
+    """Axisymmetric convenience 3-node triangle (sets axisymmetric=True)."""
+
+    axisymmetric = True
+
+
+class CAX4(CPE4):
+    """Axisymmetric convenience 4-node quad (sets axisymmetric=True)."""
+
+    axisymmetric = True
+
+
+class CAX4H(CPE4H):
+    """Axisymmetric convenience hybrid 4-node quad (sets axisymmetric=True)."""
+
+    axisymmetric = True
+
+
+class CAX8(CPE8):
+    """Axisymmetric convenience 8-node quad (sets axisymmetric=True)."""
+
+    axisymmetric = True

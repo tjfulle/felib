@@ -1,4 +1,8 @@
 from .base import Element
+from .cnd import CAX3
+from .cnd import CAX4
+from .cnd import CAX4H
+from .cnd import CAX8
 from .cnd import CPE3
 from .cnd import CPE4
 from .cnd import CPE8
@@ -16,6 +20,10 @@ from .reference import Tri3
 __all__ = [
     "Element",
     "IsoparametricElement",
+    "CAX3",
+    "CAX4",
+    "CAX4H",
+    "CAX8",
     "CPE3",
     "CPE4",
     "CPE8",
