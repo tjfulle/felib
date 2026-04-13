@@ -64,7 +64,9 @@ def mesh_plot_quad4(
 ) -> tuple[Figure | SubFigure, Axes]:
     from .element import Quad4
 
-    return mesh_plot(Quad4(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color, lw=lw, ls=ls)
+    return mesh_plot(
+        Quad4(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color, lw=lw, ls=ls
+    )
 
 
 def mesh_plot_quad8(
@@ -79,7 +81,9 @@ def mesh_plot_quad8(
 ) -> tuple[Figure | SubFigure, Axes]:
     from .element import Quad8
 
-    return mesh_plot(Quad8(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color, lw=lw, ls=ls)
+    return mesh_plot(
+        Quad8(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color, lw=lw, ls=ls
+    )
 
 
 def mesh_plot(

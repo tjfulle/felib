@@ -32,20 +32,26 @@ def beam_bending() -> None:
     _, ax = felib.plotting.mesh_plot(
         felib.element.Quad4(), x4 + scale * ua, c4, label="Analytic solution", color="orange", lw=4
     )
-#    felib.plotting.mesh_plot(
-#        felib.element.Quad4(), x4 + scale * u4, c4, label="FE CPS4 Solution", ax=ax
-#    )
+    #    felib.plotting.mesh_plot(
+    #        felib.element.Quad4(), x4 + scale * u4, c4, label="FE CPS4 Solution", ax=ax
+    #    )
     x4i = q4i.model.coords
     c4i = q4i.model.connect
     felib.plotting.mesh_plot(
-        felib.element.Quad4(), x4i + scale * u4i, c4i, label="FE CPS4I Solution", ax=ax, ls="-.", color="b"
+        felib.element.Quad4(),
+        x4i + scale * u4i,
+        c4i,
+        label="FE CPS4I Solution",
+        ax=ax,
+        ls="-.",
+        color="b",
     )
 
-#    x8 = q8.model.coords
-#    c8 = q8.model.connect
-#    felib.plotting.mesh_plot(
-#        felib.element.Quad8(), x8 + scale * u8, c8, label="FE CPS8 Solution", ax=ax, color="b"
-#    )
+    #    x8 = q8.model.coords
+    #    c8 = q8.model.connect
+    #    felib.plotting.mesh_plot(
+    #        felib.element.Quad8(), x8 + scale * u8, c8, label="FE CPS8 Solution", ax=ax, color="b"
+    #    )
 
     ax.set_aspect("equal")
     plt.legend(loc="best")
@@ -67,6 +73,7 @@ def beam_bending_quad4() -> felib.simulation.Simulation:
     step.traction(sideset="ilo", magnitude=1, direction=[0, -1])
     simulation.run()
     return simulation
+
 
 def beam_bending_quad4i() -> felib.simulation.Simulation:
     nodes, elems = felib.meshing.rectmesh((0, 10.0, 0, 0.3), nx=10, ny=3)
