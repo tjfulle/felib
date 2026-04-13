@@ -357,8 +357,8 @@ class CPE4R(CPS4):
 
         # canonical scalar patterns (node space)
         patterns = [
-            np.array([ 1, -1,  1, -1], dtype=float),
-            np.array([ 1,  1, -1, -1], dtype=float),
+            np.array([1, -1, 1, -1], dtype=float),
+            np.array([1, 1, -1, -1], dtype=float),
         ]
 
         H = []
@@ -476,16 +476,27 @@ class CPS4I(CPS4):
         # --- get standard stiffness + all load contributions ---
         hsv = pdata.copy()
         ke, re = super().eval(
-            material, step, increment, time, dt,
-            eleno, p, u, du, pdata,
-            dloads=dloads, dsloads=dsloads, rloads=rloads
+            material,
+            step,
+            increment,
+            time,
+            dt,
+            eleno,
+            p,
+            u,
+            du,
+            pdata,
+            dloads=dloads,
+            dsloads=dsloads,
+            rloads=rloads,
         )
 
         ndof = self.nnode * self.dof_per_node
-        na = 2  # incompatible DOFs
+        na = 4  # incompatible DOFs
 
         Kda = np.zeros((ndof, na), dtype=float)
         Kaa = np.zeros((na, na), dtype=float)
+        ra = np.zeros(na, dtype=float)
 
         # --------------------------------------------------------
         # Second loop: build coupling terms
@@ -493,13 +504,13 @@ class CPS4I(CPS4):
         for ipt, (w, xi) in enumerate(self.integration_points()):
             J = self.jacobian(p, xi)
             B = self.bmatrix(p, xi)
-            G = self.gmatrix(p, xi)
+            G = self.gmatrix(p, xi, J)
 
             # consistent strain state
             e = np.dot(B, u)
             de = np.dot(B, du)
 
-            D, _ = self.update_state(
+            D, s = self.update_state(
                 material,
                 step,
                 increment,
@@ -512,38 +523,37 @@ class CPS4I(CPS4):
                 de,
                 hsv[ipt],
             )
-
-            # assemble coupling blocks
-            Bt = B.T
-            Gt = G.T
-
-            Kda += w * J * np.dot(np.dot(Bt, D), G)
-            Kaa += w * J * np.dot(np.dot(Gt, D), G)
+            Kda += w * J * np.dot(np.dot(B.T, D), G)
+            Kaa += w * J * np.dot(np.dot(G.T, D), G)
+            ra += w * J * np.dot(G.T, s)
 
         # --------------------------------------------------------
         # Static condensation: K = Kdd - Kda Kaa^{-1} Kda^T
         # --------------------------------------------------------
-        Kcorr = np.dot(np.dot(Kda, np.linalg.inv(Kaa)), Kda.T)
-        ke -= Kcorr
-
+        ke -= np.dot(np.dot(Kda, np.linalg.inv(Kaa)), Kda.T)
+        re -= np.dot(np.dot(Kda, np.linalg.inv(Kaa)), ra)
         return ke, re
 
-    def gmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
+    def gmatrix(self, p: NDArray, xi: NDArray, J: float) -> NDArray:
         """
         Construct incompatible strain-displacement matrix G.
 
-        Returns shape: (3, 2)
+        Algorithm in
+
+        The Finite Element Method:  Its Basis and Fundamentals
+        By Olek C Zienkiewicz, Robert L Taylor, J.Z. Zhu
+
         """
-        r, s = xi
+        dNdxi = self.shape_derivative(np.zeros(2))
+        dxdxi = np.dot(dNdxi, p)
+        dxidx = np.linalg.inv(dxdxi)
+        J0 = np.linalg.det(dxidx)
 
-        G = np.zeros((3, 2), dtype=float)
+        s, t = xi
+        dNdxi = np.array([[-2.0 * s, 0.0], [0.0, -2.0 * t]], dtype=float)
+        dNdx = J0 / J * np.dot(dxidx, dNdxi)
 
-        # Normal components
-        G[0, 0] = r
-        G[1, 1] = s
-
-        # Shear component (key for shear locking)
-        G[2, 0] = s
-        G[2, 1] = r
-
+        G1 = np.array([[dNdx[0, 0], 0], [0, dNdx[0, 1]], [dNdx[0, 1], dNdx[0, 0]]])
+        G2 = np.array([[dNdx[1, 0], 0], [0, dNdx[1, 1]], [dNdx[1, 1], dNdx[1, 0]]])
+        G = np.concatenate((G1, G2), axis=1)
         return G
