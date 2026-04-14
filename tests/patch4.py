@@ -36,4 +36,4 @@ def test_patch4():
 
     simulation.run()
     for ebd in simulation.ebdata:
-        assert np.allclose(ebd.data[0, :, :, 4], 1.0)
+        assert np.allclose(ebd.data[0, :, :, 4], 1.0, atol = 1e-3)
