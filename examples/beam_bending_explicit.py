@@ -53,26 +53,26 @@ def beam_bending() -> None:
     # plt.title("Beam tip displacement vs time")
     # plt.show()
 
-    plt.figure()
-    plt.plot(times, ke_hist)
-    plt.xlabel("Time")
-    plt.ylabel("Kinetic energy")
-    plt.title("Kinetic energy vs time")
-    plt.show()
+    # plt.figure()
+    # plt.plot(times, ke_hist)
+    # plt.xlabel("Time")
+    # plt.ylabel("Kinetic energy")
+    # plt.title("Kinetic energy vs time")
+    # plt.show()
 
-    plt.figure()
-    plt.plot(times, ie_hist)
-    plt.xlabel("Time")
-    plt.ylabel("Internal energy")
-    plt.title("Internal energy vs time")
-    plt.show()
+    # plt.figure()
+    # plt.plot(times, ie_hist)
+    # plt.xlabel("Time")
+    # plt.ylabel("Internal energy")
+    # plt.title("Internal energy vs time")
+    # plt.show()
 
-    plt.figure()
-    plt.plot(times, ke_hist + ie_hist)
-    plt.xlabel("Time")
-    plt.ylabel("Total energy")
-    plt.title("Total energy vs time")
-    plt.show()
+    # plt.figure()
+    # plt.plot(times, ke_hist + ie_hist)
+    # plt.xlabel("Time")
+    # plt.ylabel("Total energy")
+    # plt.title("Total energy vs time")
+    # plt.show()
 
     u_frames = np.array(cstep.u_history)
 
@@ -139,7 +139,6 @@ def beam_bending_quad4() -> felib.simulation.Simulation:
     simulation = felib.simulation.Simulation(model)
     step = simulation.explicit_step(
         period=1.0e-2,
-        dt=1.0e-6,
         damping=1.0,
         history_interval=100,
     )
