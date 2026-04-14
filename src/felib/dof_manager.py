@@ -30,6 +30,10 @@ class DOFManager:
         self._dof_map: NDArray = np.empty((0, 0), dtype=int)
         self._dof_types: NDArray = np.empty(0, dtype=int)
         self._ndof: int = -1
+        self._mpc_T: NDArray | None = None
+        self._mpc_offset: NDArray | None = None
+        self._mpc_reduced_dofs: NDArray = np.empty(0, dtype=int)
+        self._mpc_slave_dofs: NDArray = np.empty(0, dtype=int)
         self.build(model)
 
     def global_dof(self, node: int, ldof: int) -> int:
@@ -188,36 +192,6 @@ class DOFManager:
         dof_types[:] = node_types_expanded.ravel()[mask]
         self._dof_types = dof_types
 
-    # TODO: Homogeneous MPC support
-    # The current DOFManager builds a full/global DOF numbering for all active
-    # DOFs in the model. To support homogeneous-MPC tied contact we will need
-    # a mechanism to represent a reduced DOF space (mains) and to map/expand
-    # secondary DOFs using a transformation matrix `T` such that
-    #
-    #   u_full = T @ u_reduced
-    #
-    # Suggested extension points (add methods here later):
-    # - `build_mpc_map(mpc_constraints)` : compute reduced DOF indices and
-    #    bookkeeping for main DOFs. Should not change existing `dof_map`
-    #    but provide a `reduced_dof_map` view and mapping helpers.
-    # - `expand_solution(u_reduced, T)` : produce the full-length displacement
-    #    vector from a reduced solution (callable by the Step after solve).
-    # - `reduced_size()` : return number of DOFs in reduced system.
-    #
-    # Important considerations:
-    # - DOF ordering (ux, uy, ...) must be consistent when building `T`.
-    # - Keep `dof_map` (full indexing) intact so existing code that expects
-    #   full DOF indices continues to work; provide the reduced mapping as
-    #   an auxiliary structure to the solver/assembly routines.
-
-    def build_mpc_map(self, mpc_constraints) -> None:
-        """
-        Placeholder for future implementation of MPC mapping.
-        Method would compute reduced DOF indices and bookkeeping for 
-        main DOFs based on provided MPC constraints. Should not change existing
-        DOF map, but provide a 'reduced_dof_map' view and mapping helpers
-        """
-
     def build_block_dof_maps(self, model: "Model") -> None:
         """
         Build a precomputed block DOF map:
@@ -244,25 +218,32 @@ class DOFManager:
                 raise RuntimeError(f"Unassigned node freedom in {block.name}")
             self._block_dof_maps[blockno] = block_dof_map
 
-    def build_mpc_map(self, mpcs: list) -> tuple[NDArray, NDArray]:
-        """
-        Build an MPC transformation matrix `T` and offset vector for a list
-        of homogeneous multi-point constraints (MPCs).
+    @property
+    def has_mpc_transform(self) -> bool:
+        return self._mpc_T is not None
 
-        Expected `mpcs` format (simple, unambiguous): a list of tuples
-            (secondary_dof, mains, offset)
-        where
-            - `secondary_dof` is an int global DOF index (0..ndof-1)
-            - `mains` is a list of `(main_dof:int, coeff:float)` tuples
-            - `offset` is a float (often 0.0 for homogeneous ties)
+    def clear_mpc_map(self) -> None:
+        self._mpc_T = None
+        self._mpc_offset = None
+        self._mpc_reduced_dofs = np.empty(0, dtype=int)
+        self._mpc_slave_dofs = np.empty(0, dtype=int)
+
+    def build_mpc_map(self, mpcs: list, *, tol: float = 1e-14) -> tuple[NDArray, NDArray]:
+        """
+        Build and store an MPC transformation matrix `T` and offset vector.
+
+        Accepted MPC formats are either normalized tuples
+        ``(slave_dof, masters, offset)`` or compiled equation rows
+        ``[dof, coeff, dof, coeff, ..., rhs]``. Equation rows are normalized
+        by treating the first nonzero term as the slave DOF.
 
         The produced transform `T` has shape (ndof, n_reduced) and satisfies
 
             u_full = T @ u_reduced + offset_vector
 
-        where `u_reduced` contains values for all DOFs that are *not* secondaries
+        where `u_reduced` contains values for all DOFs that are *not* slaves
         (i.e. independent DOFs). The reduced DOFs ordering is the ascending
-        list of full DOF indices that are not secondaries.
+        list of full DOF indices that are not slaves.
 
         Returns
         -------
@@ -273,43 +254,44 @@ class DOFManager:
 
         Notes
         -----
-        - This implementation assumes mains are not themselves declared as
-          secondaries. Handling chains of dependent MPCs requires graph ordering
+        - This implementation assumes masters are not themselves declared as
+          slaves. Handling chains of dependent MPCs requires graph ordering
           or elimination and is not implemented here.
         """
+        self.clear_mpc_map()
         ndof = int(self._ndof)
         if ndof <= 0:
             raise RuntimeError("DOFManager: build node freedom table before building MPC map")
+        if not mpcs:
+            return np.eye(ndof, dtype=float), np.zeros(ndof, dtype=float)
 
-        # Mark secondary DOFs and collect mains/offsets
-        is_secondary = np.zeros(ndof, dtype=bool)
+        normalized = [self._normalize_mpc_entry(entry, tol=tol) for entry in mpcs]
+        is_slave = np.zeros(ndof, dtype=bool)
         offset = np.zeros(ndof, dtype=float)
-        main_set = set()
+        master_set: set[int] = set()
 
-        for entry in mpcs:
-            if len(entry) == 3:
-                secondary, mains, off = entry
-            elif len(entry) == 2:
-                secondary, mains = entry
-                off = 0.0
-            else:
-                raise ValueError("MPC entry must be (secondary, mains[, offset])")
-            secondary = int(secondary)
-            is_secondary[secondary] = True
-            offset[secondary] = float(off)
-            for m, c in mains:
-                main_set.add(int(m))
+        for slave, masters, off in normalized:
+            slave = int(slave)
+            self._validate_dof(slave)
+            if is_slave[slave]:
+                raise RuntimeError(f"Slave DOF {slave} is constrained by multiple MPCs")
+            is_slave[slave] = True
+            offset[slave] = float(off)
+            for m, c in masters:
+                master = int(m)
+                self._validate_dof(master)
+                master_set.add(master)
 
-        # Basic sanity: mains must not be secondaries in this simple implementation
-        mains_list = sorted(main_set)
-        if any(is_secondary[np.array(mains_list, dtype=int)]):
-            raise RuntimeError("MPC mains that are also secondaries are not supported by this implementation")
+        # Basic sanity: masters must not be slaves in this simple implementation
+        masters_list = sorted(master_set)
+        if any(is_slave[np.array(masters_list, dtype=int)]):
+            raise RuntimeError("MPC masters that are also slaves are not supported by this implementation")
 
-        # Reduced DOFs are all DOFs that are not declared as secondaries
-        reduced_dofs = [i for i in range(ndof) if not is_secondary[i]]
+        # Reduced DOFs are all DOFs that are not declared as slaves
+        reduced_dofs = [i for i in range(ndof) if not is_slave[i]]
         n_reduced = len(reduced_dofs)
         if n_reduced == 0:
-            raise RuntimeError("No reduced DOFs found (all DOFs are secondaries)")
+            raise RuntimeError("No reduced DOFs found (all DOFs are slaves)")
 
         # Build transform matrix T (ndof x n_reduced)
         T = np.zeros((ndof, n_reduced), dtype=float)
@@ -319,32 +301,147 @@ class DOFManager:
         for i, d in enumerate(reduced_dofs):
             T[d, i] = 1.0
 
-        # Fill secondary rows using provided main coefficients
-        for entry in mpcs:
-            if len(entry) == 3:
-                secondary, mains, _ = entry
-            else:
-                secondary, mains = entry
-            secondary = int(secondary)
-            for m, coeff in mains:
+        # Fill slave rows using provided master coefficients
+        for slave, masters, _ in normalized:
+            slave = int(slave)
+            for m, coeff in masters:
                 m = int(m)
                 if m not in reduced_index:
                     raise RuntimeError(f"Master DOF {m} not available in reduced DOF set")
-                T[secondary, reduced_index[m]] = float(coeff)
+                T[slave, reduced_index[m]] = float(coeff)
 
         # Store bookkeeping
         self._mpc_T = T
         self._mpc_offset = offset
-        self._mpc_reduced_dofs = reduced_dofs
+        self._mpc_reduced_dofs = np.array(reduced_dofs, dtype=int)
+        self._mpc_slave_dofs = np.flatnonzero(is_slave)
 
         return T, offset
+
+    def _normalize_mpc_entry(
+        self, entry, *, tol: float
+    ) -> tuple[int, list[tuple[int, float]], float]:
+        if self._is_normalized_mpc(entry):
+            if len(entry) == 3:
+                slave, masters, offset = entry
+            else:
+                slave, masters = entry
+                offset = 0.0
+            return int(slave), [(int(m), float(c)) for m, c in masters], float(offset)
+
+        if len(entry) < 5 or len(entry) % 2 == 0:
+            raise ValueError("Compiled MPC equation must be [dof, coeff, ..., rhs]")
+
+        rhs = float(entry[-1])
+        order: list[int] = []
+        terms: dict[int, float] = {}
+        for i in range(0, len(entry) - 1, 2):
+            dof = int(entry[i])
+            coeff = float(entry[i + 1])
+            if dof not in terms:
+                order.append(dof)
+            terms[dof] = terms.get(dof, 0.0) + coeff
+
+        active_terms = [(dof, terms[dof]) for dof in order if abs(terms[dof]) > tol]
+        if len(active_terms) < 2:
+            raise ValueError("MPC equation must have at least two nonzero terms")
+
+        slave, slave_coeff = active_terms[0]
+        masters = [
+            (master, -coeff / slave_coeff)
+            for master, coeff in active_terms[1:]
+        ]
+        offset = rhs / slave_coeff
+        return slave, masters, offset
+
+    @staticmethod
+    def _is_normalized_mpc(entry) -> bool:
+        if not isinstance(entry, (list, tuple)):
+            return False
+        if len(entry) not in (2, 3):
+            return False
+        masters = entry[1]
+        if not isinstance(masters, (list, tuple)):
+            return False
+        return all(isinstance(master, (list, tuple)) and len(master) == 2 for master in masters)
+
+    def _validate_dof(self, dof: int) -> None:
+        if dof < 0 or dof >= self._ndof:
+            raise ValueError(f"DOF {dof} is outside the active range 0..{self._ndof - 1}")
+
+    def can_apply_mpc_reduction(self, ddofs: NDArray | list[int] | None = None) -> bool:
+        if not self.has_mpc_transform:
+            return False
+        if ddofs is None:
+            return True
+        ddofs = np.asarray(ddofs, dtype=int)
+        return not np.any(np.isin(ddofs, self._mpc_slave_dofs))
+
+    def step_transform(
+        self,
+        ddofs: NDArray | list[int],
+        dvals: NDArray | list[float],
+    ) -> tuple[NDArray, NDArray, NDArray]:
+        """
+        Return ``(T_step, offset_step, reduced_free_dofs)`` for a step.
+
+        ``T_step`` maps only unconstrained independent unknowns to the full DOF
+        vector. Prescribed independent DOFs are propagated into ``offset_step``.
+        """
+        if self._mpc_T is None or self._mpc_offset is None:
+            raise RuntimeError("MPC transform has not been built. Call build_mpc_map first.")
+        ddofs = np.asarray(ddofs, dtype=int)
+        dvals = np.asarray(dvals, dtype=float)
+        if len(ddofs) != len(dvals):
+            raise ValueError("ddofs and dvals must have the same length")
+        if np.any(np.isin(ddofs, self._mpc_slave_dofs)):
+            raise RuntimeError("Prescribed slave DOFs cannot be eliminated with MPC reduction")
+
+        reduced_dofs = self._mpc_reduced_dofs
+        prescribed_reduced = np.isin(reduced_dofs, ddofs)
+        free_reduced = ~prescribed_reduced
+        free_cols = np.flatnonzero(free_reduced)
+        prescribed_cols = np.flatnonzero(prescribed_reduced)
+
+        offset = self._mpc_offset.copy()
+        if len(prescribed_cols):
+            dval_by_dof = {int(dof): float(value) for dof, value in zip(ddofs, dvals)}
+            q_known = np.array(
+                [dval_by_dof[int(reduced_dofs[col])] for col in prescribed_cols],
+                dtype=float,
+            )
+            offset = offset + self._mpc_T[:, prescribed_cols] @ q_known
+
+        return self._mpc_T[:, free_cols], offset, reduced_dofs[free_cols]
+
+    def reduced_initial_values(
+        self,
+        u_full: NDArray,
+        ddofs: NDArray | list[int],
+    ) -> NDArray:
+        _, _, reduced_free_dofs = self.step_transform(ddofs, np.zeros(len(ddofs), dtype=float))
+        return np.asarray(u_full, dtype=float)[reduced_free_dofs]
+
+    def expand_step_solution(
+        self,
+        u_reduced: NDArray,
+        ddofs: NDArray | list[int],
+        dvals: NDArray | list[float],
+    ) -> NDArray:
+        T, offset, _ = self.step_transform(ddofs, dvals)
+        u_reduced = np.asarray(u_reduced, dtype=float)
+        if T.shape[1] != len(u_reduced):
+            raise ValueError(
+                f"Reduced solution has length {len(u_reduced)}, expected {T.shape[1]}"
+            )
+        return T @ u_reduced + offset
 
     def compute_transform(self, fdofs: NDArray | None = None) -> tuple[NDArray, NDArray]:
         """Return transform `T_f` and offset restricted to free DOFs `fdofs`.
 
         If `fdofs` is None the full transform `T` and full offset are returned.
         """
-        if not hasattr(self, "_mpc_T"):
+        if self._mpc_T is None or self._mpc_offset is None:
             raise RuntimeError("MPC transform has not been built. Call build_mpc_map first.")
         T = self._mpc_T
         offset = self._mpc_offset
@@ -358,11 +455,11 @@ class DOFManager:
 
         Returns `u_full = T @ u_reduced + offset`.
         """
-        if not hasattr(self, "_mpc_T"):
+        if self._mpc_T is None or self._mpc_offset is None:
             raise RuntimeError("MPC transform has not been built. Call build_mpc_map first.")
         return self._mpc_T.dot(u_reduced) + self._mpc_offset
 
     def reduced_size(self) -> int:
-        if not hasattr(self, "_mpc_reduced_dofs"):
+        if not self.has_mpc_transform:
             raise RuntimeError("MPC transform has not been built. Call build_mpc_map first.")
         return len(self._mpc_reduced_dofs)

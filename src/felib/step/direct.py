@@ -25,6 +25,8 @@ class DirectStep(StaticStep):
     def compile(
         self, model: "Model", dof_manager: "DOFManager", parent: CompiledStep | None
     ) -> CompiledStep:
+        equations = self.compile_constraints(model, dof_manager)
+        self._configure_mpc_map(dof_manager, equations)
         return CompiledDirectStep(
             name=self.name,
             parent=parent,
@@ -34,7 +36,7 @@ class DirectStep(StaticStep):
             dloads=self.compile_dloads(model),
             dsloads=self.compile_dsloads(model),
             rloads=self.compile_rloads(model),
-            equations=self.compile_constraints(model, dof_manager),
+            equations=equations,
         )
 
 
@@ -56,12 +58,21 @@ class CompiledDirectStep(CompiledStep):
     ) -> NDArray:
         ddofs = self.ddofs
         ndof = len(u0)
-        fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
-        nf = len(fdofs)
+        dof_manager = args[0] if len(args) > 0 and hasattr(args[0], "step_transform") else None
+        use_mpc_reduction = (
+            dof_manager is not None
+            and getattr(dof_manager, "has_mpc_transform", False)
+            and dof_manager.can_apply_mpc_reduction(ddofs)
+        )
         neq = len(self.equations) if self.equations else 0
 
-        x0 = u0[fdofs]
-        if neq > 0:
+        if use_mpc_reduction:
+            x0 = dof_manager.reduced_initial_values(u0, ddofs)
+        else:
+            fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
+            x0 = u0[fdofs]
+        nf = len(x0)
+        if neq > 0 and not use_mpc_reduction:
             x0 = np.hstack([x0, np.zeros(neq)])
         increment = 1
         time = (0.0, self.start)
@@ -80,6 +91,7 @@ class CompiledDirectStep(CompiledStep):
             dsloads=self.dsloads,
             rloads=self.rloads,
             equations=self.equations,
+            dof_manager=dof_manager,
             args=args,
         )
         solver = DirectSolver()
@@ -88,9 +100,12 @@ class CompiledDirectStep(CompiledStep):
         # -------------------------------------------------
         # Construct final displacement
         # -------------------------------------------------
-        u = u0.copy()
-        u[fdofs] = state.x[:nf]
-        u[ddofs] = self.dvals[1, :]
+        if use_mpc_reduction:
+            u = dof_manager.expand_step_solution(state.x[:nf], ddofs, self.dvals[1, :])
+        else:
+            u = u0.copy()
+            u[fdofs] = state.x[:nf]
+            u[ddofs] = self.dvals[1, :]
 
         R = kernel.resid
         K = kernel.stiff
