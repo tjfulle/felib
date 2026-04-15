@@ -225,6 +225,66 @@ class CPE3(CPX3):
         B[3, 0::2] = dNdx[1]
         B[3, 1::2] = dNdx[0]
         return B
+    
+
+class CPS3NL(CPS3):
+    nlgeom = True
+
+    def update_state(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        e: NDArray,
+        de: NDArray,
+        hsv: NDArray,
+    ) -> tuple[NDArray, NDArray]:
+        temp = dtemp = 0.0
+        n = len(self.history_variables())
+
+        D, S = material.eval(
+            hsv[n:], e, de, time, dt, temp, dtemp,
+            self.ndir, self.nshr, eleno, step, increment
+        )
+
+        hsv[: self.ntens] = e
+        hsv[self.ntens : 2 * self.ntens] = S
+        return D, S
+
+
+class CPE3NL(CPE3):
+    nlgeom = True
+
+    def update_state(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        e: NDArray,
+        de: NDArray,
+        hsv: NDArray,
+    ) -> tuple[NDArray, NDArray]:
+        temp = dtemp = 0.0
+        n = len(self.history_variables())
+
+        D, S = material.eval(
+            hsv[n:], e, de, time, dt, temp, dtemp,
+            self.ndir, self.nshr, eleno, step, increment
+        )
+
+        hsv[: self.ntens] = e
+        hsv[self.ntens : 2 * self.ntens] = S
+        return D, S
 
 
 class CPX4(Quad4, ContinuumElement, IsoparametricElement):
@@ -438,3 +498,62 @@ class CPE8(CPX8):
         B[3, 0::2] = dNdx[1]
         B[3, 1::2] = dNdx[0]
         return B
+
+class CPS8NL(CPS8):
+    nlgeom = True
+
+    def update_state(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        e: NDArray,
+        de: NDArray,
+        hsv: NDArray,
+    ) -> tuple[NDArray, NDArray]:
+        temp = dtemp = 0.0
+        n = len(self.history_variables())
+
+        D, S = material.eval(
+            hsv[n:], e, de, time, dt, temp, dtemp,
+            self.ndir, self.nshr, eleno, step, increment
+        )
+
+        hsv[: self.ntens] = e
+        hsv[self.ntens : 2 * self.ntens] = S
+        return D, S
+
+
+class CPE8NL(CPE8):
+    nlgeom = True
+
+    def update_state(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        e: NDArray,
+        de: NDArray,
+        hsv: NDArray,
+    ) -> tuple[NDArray, NDArray]:
+        temp = dtemp = 0.0
+        n = len(self.history_variables())
+
+        D, S = material.eval(
+            hsv[n:], e, de, time, dt, temp, dtemp,
+            self.ndir, self.nshr, eleno, step, increment
+        )
+
+        hsv[: self.ntens] = e
+        hsv[self.ntens : 2 * self.ntens] = S
+        return D, S
