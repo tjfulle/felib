@@ -13,6 +13,7 @@ from .constants import NodeVariable
 from .dof_manager import DOFManager
 from .step import CompiledStep
 from .step import DirectStep
+from .step import DynamicStep
 from .step import HeatTransferStep
 from .step import StaticStep
 from .step import Step
@@ -55,6 +56,14 @@ class Simulation:
     ) -> StaticStep:
         name = name or f"step-{len(self.steps)}"
         step = StaticStep(name=name, ndim=self.model.ndim, period=period, **options)
+        self.steps.append(step)
+        return step
+
+    def dynamic_step(
+        self, name: str | None = None, period: float = 1.0, **options: Any
+    ) -> DynamicStep:
+        name = name or f"step-{len(self.steps)}"
+        step = DynamicStep(name=name, ndim=self.model.ndim, period=period, **options)
         self.steps.append(step)
         return step
 
