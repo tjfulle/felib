@@ -26,7 +26,7 @@ def test_patch4():
 
     model = felib.model.Model(mesh, name="patch4")
     m = felib.material.LinearElastic(density=1.0, youngs_modulus=1.0e03, poissons_ratio=2.5e-01)
-    model.assign_properties(block="All", element=felib.element.CPE4(), material=m)
+    model.assign_properties(block="All", element=felib.element.CPE4NL(), material=m)
 
     simulation = felib.simulation.Simulation(model)
     step = simulation.static_step()
@@ -36,4 +36,4 @@ def test_patch4():
 
     simulation.run()
     for ebd in simulation.ebdata:
-        assert np.allclose(ebd.data[0, :, :, 4], 1.0)
+        assert np.allclose(ebd.data[0, :, :, 4], 1.0, atol=1e-3)

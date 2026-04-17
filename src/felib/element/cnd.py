@@ -14,11 +14,11 @@ ContinuumElement
 CPX3
     Base constant strain triangle with 3 nodes.
 CPS3, CPE3
-    Plane stress and plane strain 3‑node triangles.
+    Plane stress and plane strain 3-node triangles.
 CPX4
     Base constant strain quadrilateral with 4 nodes.
 CPS4, CPE4
-    Plane stress and plane strain 4‑node quadrilaterals.
+    Plane stress and plane strain 4-node quadrilaterals.
 """
 
 from typing import TYPE_CHECKING
@@ -159,7 +159,7 @@ class CPX3(Tri3, ContinuumElement, IsoparametricElement):
     @property
     def node_freedom_table(self) -> list[tuple[int, ...]]:
         """
-        Degree‑of‑freedom layout for a 3 node element.
+        Degree-of-freedom layout for a 3 node element.
 
         Returns
         -------
@@ -169,7 +169,7 @@ class CPX3(Tri3, ContinuumElement, IsoparametricElement):
 
     def pmatrix(self, xi: NDArray) -> NDArray:
         """
-        Constructs displacement‑to‑nodal matrix P.
+        Constructs displacement-to-nodal matrix P.
 
         Parameters
         ----------
@@ -195,7 +195,7 @@ class CPS3(CPX3):
 
     def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
         """
-        Compute strain–displacement matrix B at a given point.
+        Compute strain-displacement matrix B at a given point.
 
         Parameters
         ----------
@@ -556,3 +556,251 @@ class CPS4I(CPS4):
         G2 = np.array([[dNdx[1, 0], 0], [0, dNdx[1, 1]], [dNdx[1, 1], dNdx[1, 0]]])
         G = np.concatenate((G1, G2), axis=1)
         return G
+
+
+class NLGeom(ContinuumElement, IsoparametricElement):
+    def green_lagrange_2d(self, p: NDArray, u: NDArray, xi: NDArray) -> NDArray:
+        dNdx = self.shape_gradient(p, xi)  # shape: (2, nnode)
+
+        ux = u[0::2]
+        uy = u[1::2]
+
+        gradu = np.array(
+            [
+                [dNdx[0] @ ux, dNdx[1] @ ux],
+                [dNdx[0] @ uy, dNdx[1] @ uy],
+            ],
+            dtype=float,
+        )
+
+        F = np.eye(2) + gradu
+        E = 0.5 * (F.T @ F - np.eye(2))
+        return E
+
+    def pack_green_lagrange(self, E: NDArray) -> NDArray:
+        if self.ndir == 2 and self.nshr == 1:  # plane stress
+            return np.array([E[0, 0], E[1, 1], 2.0 * E[0, 1]], dtype=float)
+        if self.ndir == 3 and self.nshr == 1:  # plane strain
+            return np.array([E[0, 0], E[1, 1], 0.0, 2.0 * E[0, 1]], dtype=float)
+        raise NotImplementedError
+
+    def pk2_voigt_to_tensor(self, s: NDArray) -> NDArray:
+        if self.ndir == 2 and self.nshr == 1:  # plane stress
+            return np.array([[s[0], s[2]], [s[2], s[1]]], dtype=float)
+        if self.ndir == 3 and self.nshr == 1:  # plane strain
+            return np.array([[s[0], s[3]], [s[3], s[1]]], dtype=float)
+        raise NotImplementedError
+
+    def deformation_gradient_2d(
+        self, p: NDArray, u: NDArray, xi: NDArray
+    ) -> tuple[NDArray, NDArray]:
+        dNdx = self.shape_gradient(p, xi)
+
+        ux = u[0::2]
+        uy = u[1::2]
+
+        grad_u = np.array(
+            [
+                [dNdx[0] @ ux, dNdx[1] @ ux],
+                [dNdx[0] @ uy, dNdx[1] @ uy],
+            ],
+            dtype=float,
+        )
+
+        F = np.eye(2) + grad_u
+        E = 0.5 * (F.T @ F - np.eye(2))
+        return F, E
+
+    def piola_tangent_2d(
+        self,
+        p: NDArray,
+        u: NDArray,
+        xi: NDArray,
+        w: float,
+        J: float,
+        s_voigt: NDArray,
+        D_voigt: NDArray,
+    ) -> NDArray:
+        """
+        Consistent tangent for 2D nonlinear element residual using Piola stress.
+
+        Returns the element stiffness contribution for one integration point.
+        """
+        dNdx = self.shape_gradient(p, xi)
+        F, _ = self.deformation_gradient_2d(p, u, xi)
+        S = self.pk2_voigt_to_tensor(s_voigt)
+
+        ndof = self.nnode * self.dof_per_node
+        K = np.zeros((ndof, ndof), dtype=float)
+
+        for b in range(self.nnode):
+            Gb = dNdx[:, b]  # [dN_b/dx, dN_b/dy]
+
+            for beta in range(2):
+                # dF from one nodal dof perturbation
+                dF = np.zeros((2, 2), dtype=float)
+                dF[beta, :] = Gb
+
+                # dE = 0.5*(F^T dF + dF^T F)
+                dE = 0.5 * (F.T @ dF + dF.T @ F)
+                de = self.pack_green_lagrange(dE)
+
+                # dS from material tangent
+                dS_voigt = D_voigt @ de
+                dS = self.pk2_voigt_to_tensor(dS_voigt)
+
+                # dP = dF S + F dS
+                dP = dF @ S + F @ dS
+
+                # contribution to all test-node forces
+                for a in range(self.nnode):
+                    Ga = dNdx[:, a]
+                    df = dP @ Ga
+
+                    ia = self.dof_per_node * a
+                    ib = self.dof_per_node * b + beta
+                    K[ia : ia + 2, ib] += w * J * df
+
+        return K
+
+    def eval(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        du: NDArray,
+        pdata: NDArray,
+        dloads: list["DistributedLoad"] | None = None,
+        dsloads: list[tuple[int, "DistributedSurfaceLoad"]] | None = None,
+        rloads: list["RobinLoad"] | None = None,
+    ) -> tuple[NDArray, NDArray]:
+        """
+        Perform element integration and compute stiffness and residual.
+
+        This routine handles:
+        - Volume integrals
+        - Body forces
+        - Surface loads
+        - Robin boundary conditions
+
+        Args:
+            material: Constitutive model
+            step: Step number
+            increment: Increment count
+            time: Time history sequence
+            dt: Time increment
+            eleno: Element index
+            p: Nodal coordinates
+            u: Element DOF vector
+            du: Incremental DOFs
+            pdata: Integration point storages
+            dloads: Volume distributed loads
+            dsloads: Surface distributed loads
+            rloads: Robin loads
+
+        Returns:
+            Tuple of (element stiffness ke, element residual re)
+        """
+        dloads = dloads or []
+        dsloads = dsloads or []
+        rloads = rloads or []
+
+        ndof = self.nnode * self.dof_per_node
+        re = np.zeros(ndof)
+        ke = np.zeros((ndof, ndof))
+
+        # ————————————————— Volume integration —————————————————
+        for ipt, (w, xi) in enumerate(self.integration_points()):
+            J = self.jacobian(p, xi)
+            Pmat = self.pmatrix(xi)
+            x = self.interpolate(p, xi)
+
+            # Large strain kinematics
+            E = self.green_lagrange_2d(p, u, xi)
+            e = self.pack_green_lagrange(E)
+
+            E_prev = self.green_lagrange_2d(p, u - du, xi)
+            e_prev = self.pack_green_lagrange(E_prev)
+            de = (e - e_prev) / dt
+
+            D, s = self.update_state(
+                material, step, increment, time, dt, eleno, p, u, e, de, pdata[ipt]
+            )
+
+            # Convert PK2 stress to tensor and build Piola stress
+            F, _ = self.deformation_gradient_2d(p, u, xi)
+            S = self.pk2_voigt_to_tensor(s)
+            P = F @ S
+
+            # Residual from Piola stress
+            dNdx = self.shape_gradient(p, xi)
+            for a in range(self.nnode):
+                ia = self.dof_per_node * a
+                re[ia : ia + 2] += w * J * (P @ dNdx[:, a])
+
+            # Tangent from linearization of the Piola residual
+            ke += self.piola_tangent_2d(p, u, xi, w, J, s, D)
+
+            # — Body forces
+            for dload in dloads:
+                value = dload(step, increment, time, dt, eleno, ipt, x.tolist())
+                re -= w * J * np.dot(Pmat, value)
+
+        # ————————————————— Surface loads —————————————————
+        for edge_no, dsload in dsloads:
+            nodes = self.edges[edge_no]
+            nft = [self.dof_per_node * n + d for n in nodes for d in range(self.dof_per_node)]
+            for ipt, (w, xi) in enumerate(self.edge_integration_points()):
+                x = self.interpolate_edge(edge_no, p, xi)
+                n = self.edge_normal(edge_no, p, xi)
+                traction = dsload(step, increment, time, dt, eleno, edge_no, ipt, x.tolist(), n)
+                st = self.ref_edge_coords(edge_no, xi)
+                P = self.pmatrix(st)[nft]
+                J = self.edge_jacobian(edge_no, p, xi)
+                re[nft] -= w * J * np.dot(P, traction)
+
+        # ————————————————— Robin boundary conditions —————————————————
+        for rload in rloads:
+            nodes = self.edges[rload.edge]
+            nft = [self.dof_per_node * n + d for n in nodes for d in range(self.dof_per_node)]
+            H = np.asarray(rload.H)
+            u0 = np.asarray(rload.u0)
+            for ipt, (w, xi) in enumerate(self.edge_integration_points()):
+                st = self.ref_edge_coords(rload.edge, xi)
+                P = self.pmatrix(st)[nft]
+                J = self.edge_jacobian(rload.edge, p, xi)
+                kr = w * J * np.dot(np.dot(P, H), P.T)
+                fr = w * J * np.dot(P, np.dot(H, u0))
+                ke[np.ix_(nft, nft)] += kr
+                re[nft] += np.dot(kr, u[nft]) - fr
+
+        return ke, re
+
+
+class CPS3NL(CPS3, NLGeom):
+    pass
+
+
+class CPE3NL(CPE3, NLGeom):
+    pass
+
+
+class CPS4NL(CPS4, NLGeom):
+    pass
+
+
+class CPE4NL(CPE4, NLGeom):
+    pass
+
+
+class CPS8NL(CPS8, NLGeom):
+    pass
+
+
+class CPE8NL(CPE8, NLGeom):
+    pass

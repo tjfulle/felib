@@ -31,6 +31,8 @@ class IsoparametricElement(Element):
     gauss_pts: NDArray
     edge_gauss_wts: NDArray
     edge_gauss_pts: NDArray
+    uses_local_pressure: bool = False
+    npressure: int = 0
 
     # —————————————————————————————————————————————————————————————
     # Integration point accessors
@@ -397,23 +399,27 @@ class IsoparametricElement(Element):
         # ————————————————— Volume integration —————————————————
         for ipt, (w, xi) in enumerate(self.integration_points()):
             J = self.jacobian(p, xi)
-            B = self.bmatrix(p, xi)
-            P = self.pmatrix(xi)
+            Pmat = self.pmatrix(xi)
             x = self.interpolate(p, xi)
+
+            # Keep this if you still want the current tangent structure for now
+            B = self.bmatrix(p, xi)
 
             # — Internal contribution
             e = np.dot(B, u)
             de = np.dot(B, du) / dt
+
             D, s = self.update_state(
                 material, step, increment, time, dt, eleno, p, u, e, de, pdata[ipt]
             )
+
             ke += w * J * np.dot(np.dot(B.T, D), B)
             re += w * J * np.dot(B.T, s)
 
             # — Body forces
             for dload in dloads:
                 value = dload(step, increment, time, dt, eleno, ipt, x.tolist())
-                re -= w * J * np.dot(P, value)
+                re -= w * J * np.dot(Pmat, value)
 
         # ————————————————— Surface loads —————————————————
         for edge_no, dsload in dsloads:
