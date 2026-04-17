@@ -31,8 +31,6 @@ class IsoparametricElement(Element):
     gauss_pts: NDArray
     edge_gauss_wts: NDArray
     edge_gauss_pts: NDArray
-    uses_local_pressure: bool = False
-    npressure: int = 0
 
     # —————————————————————————————————————————————————————————————
     # Integration point accessors
@@ -301,21 +299,6 @@ class IsoparametricElement(Element):
         """
         return float(np.linalg.norm(self.edge_tangent(edge_no, p, xi)))
 
-    def bmatrix_vol(self, p: NDArray, xi: NDArray) -> NDArray:
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not define a volumetric B matrix"
-        )
-
-    def pressure_shape(self, xi: NDArray) -> NDArray:
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not define local pressure interpolation"
-        )
-
-    def pressure_stress_vector(self, pressure: float, size: int) -> NDArray:
-        sp = np.zeros(size, dtype=float)
-        sp[: min(3, size)] = pressure
-        return sp
-
     # —————————————————————————————————————————————————————————————
     # Abstract update_state required for eval
     # —————————————————————————————————————————————————————————————
@@ -355,163 +338,6 @@ class IsoparametricElement(Element):
             Elastic stiffness tangent and stress
         """
         ...
-
-    def _apply_surface_loads(
-        self,
-        re: NDArray,
-        p: NDArray,
-        step: int,
-        increment: int,
-        time: Sequence[float],
-        dt: float,
-        eleno: int,
-        dsloads: list[tuple[int, DistributedSurfaceLoad]],
-    ) -> None:
-        for edge_no, dsload in dsloads:
-            nodes = self.edges[edge_no]
-            nft = [self.dof_per_node * n + d for n in nodes for d in range(self.dof_per_node)]
-            for ipt, (w, xi) in enumerate(self.edge_integration_points()):
-                x = self.interpolate_edge(edge_no, p, xi)
-                n = self.edge_normal(edge_no, p, xi)
-                traction = dsload(step, increment, time, dt, eleno, edge_no, ipt, x.tolist(), n)
-                st = self.ref_edge_coords(edge_no, xi)
-                P = self.pmatrix(st)[nft]
-                J = self.edge_jacobian(edge_no, p, xi)
-                re[nft] -= w * J * np.dot(P, traction)
-
-    def _apply_robin_loads(
-        self,
-        ke: NDArray,
-        re: NDArray,
-        u: NDArray,
-        p: NDArray,
-        rloads: list[RobinLoad],
-    ) -> None:
-        for rload in rloads:
-            nodes = self.edges[rload.edge]
-            nft = [self.dof_per_node * n + d for n in nodes for d in range(self.dof_per_node)]
-            H = np.asarray(rload.H)
-            u0 = np.asarray(rload.u0)
-            for w, xi in self.edge_integration_points():
-                st = self.ref_edge_coords(rload.edge, xi)
-                P = self.pmatrix(st)[nft]
-                J = self.edge_jacobian(rload.edge, p, xi)
-                kr = w * J * np.dot(np.dot(P, H), P.T)
-                fr = w * J * np.dot(P, np.dot(H, u0))
-                ke[np.ix_(nft, nft)] += kr
-                re[nft] += np.dot(kr, u[nft]) - fr
-
-    def eval_mixed_condensed(
-        self,
-        material: Material,
-        step: int,
-        increment: int,
-        time: Sequence[float],
-        dt: float,
-        eleno: int,
-        p: NDArray,
-        u: NDArray,
-        du: NDArray,
-        pdata: NDArray,
-        dloads: list[DistributedLoad],
-        dsloads: list[tuple[int, DistributedSurfaceLoad]],
-        rloads: list[RobinLoad],
-    ) -> tuple[NDArray, NDArray]:
-        ndof_u = self.nnode * self.dof_per_node
-        npressure = self.npressure
-        if npressure <= 0:
-            raise RuntimeError(
-                f"{self.__class__.__name__} requests local pressure condensation without "
-                "declaring any pressure DOFs"
-            )
-
-        Kuu = np.zeros((ndof_u, ndof_u), dtype=float)
-        Kup = np.zeros((ndof_u, npressure), dtype=float)
-        Kpu = np.zeros((npressure, ndof_u), dtype=float)
-        Kpp = np.zeros((npressure, npressure), dtype=float)
-        Ru = np.zeros(ndof_u, dtype=float)
-        Rp = np.zeros(npressure, dtype=float)
-
-        strains: list[NDArray] = []
-        dev_stresses: list[NDArray] = []
-        pressure_shapes: list[NDArray] = []
-        volumetric_strains: list[float] = []
-#Code lines 359-438 generated with CODEX from ChatGPT, adapted for ME7540
-
-        for ipt, (w, xi) in enumerate(self.integration_points()):
-            J = self.jacobian(p, xi)
-            B = self.bmatrix(p, xi)
-            Bv = self.bmatrix_vol(p, xi)
-            P = self.pmatrix(xi)
-            Np = np.atleast_2d(self.pressure_shape(xi))
-            x = self.interpolate(p, xi)
-
-            e = np.dot(B, u)
-            de = np.dot(B, du) / dt
-            ev = float(np.dot(Bv, u)[0])
-            temp = dtemp = 0.0
-            Ddev, sdev, Kbulk = material.eval_hybrid(
-                pdata[ipt][len(self.history_variables()) :],
-                e,
-                de,
-                time,
-                dt,
-                temp,
-                dtemp,
-                getattr(self, "ndir"),
-                getattr(self, "nshr"),
-                eleno,
-                step,
-                increment,
-            )
-
-            Kuu += w * J * np.dot(np.dot(B.T, Ddev), B)
-            coupling = w * J * np.dot(Bv.T, Np)
-            Kup -= coupling
-            Kpu -= coupling.T
-            Kpp -= w * J * (1.0 / Kbulk) * np.dot(Np.T, Np)
-            Ru += w * J * np.dot(B.T, sdev)
-            Rp -= w * J * Np.ravel() * ev
-
-            strains.append(np.asarray(e, dtype=float))
-            dev_stresses.append(np.asarray(sdev, dtype=float))
-            pressure_shapes.append(Np.ravel())
-            volumetric_strains.append(ev)
-
-            for dload in dloads:
-                value = dload(step, increment, time, dt, eleno, ipt, x.tolist())
-                Ru -= w * J * np.dot(P, value)
-
-        try:
-            pressure_dofs = -np.linalg.solve(Kpp, Rp)
-            ke = Kuu - Kup @ np.linalg.solve(Kpp, Kpu)
-        except np.linalg.LinAlgError as err:
-            raise RuntimeError(
-                f"Local pressure condensation failed for {self.__class__.__name__}"
-            ) from err
-        re = Ru + Kup @ pressure_dofs
-
-        ntens = len(strains[0]) if strains else 0
-        for ipt, (e, sdev, Np, ev) in enumerate(
-            zip(strains, dev_stresses, pressure_shapes, volumetric_strains)
-        ):
-            pressure = float(np.dot(Np, pressure_dofs))
-            sigma = sdev - self.pressure_stress_vector(pressure, ntens)
-            hsv = pdata[ipt]
-            if ntens:
-                hsv[:ntens] = e
-                hsv[ntens : 2 * ntens] = sigma
-            offset = 2 * ntens
-            nstore = min(npressure, max(0, hsv.size - offset))
-            if nstore:
-                hsv[offset : offset + nstore] = pressure_dofs[:nstore]
-                offset += nstore
-            if offset < hsv.size:
-                hsv[offset] = ev
-
-        self._apply_surface_loads(re, p, step, increment, time, dt, eleno, dsloads)
-        self._apply_robin_loads(ke, re, u, p, rloads)
-        return ke, re
 
     # —————————————————————————————————————————————————————————————
     # Main evaluation routine
@@ -568,22 +394,6 @@ class IsoparametricElement(Element):
         re = np.zeros(ndof)
         ke = np.zeros((ndof, ndof))
 
-        if getattr(self, "uses_local_pressure", False):
-            return self.eval_mixed_condensed(
-                material,
-                step,
-                increment,
-                time,
-                dt,
-                eleno,
-                p,
-                u,
-                du,
-                pdata,
-                dloads,
-                dsloads,
-                rloads,
-            )
         # ————————————————— Volume integration —————————————————
         for ipt, (w, xi) in enumerate(self.integration_points()):
             J = self.jacobian(p, xi)
@@ -619,6 +429,18 @@ class IsoparametricElement(Element):
                 re[nft] -= w * J * np.dot(P, traction)
 
         # ————————————————— Robin boundary conditions —————————————————
-        self._apply_robin_loads(ke, re, u, p, rloads)
+        for rload in rloads:
+            nodes = self.edges[rload.edge]
+            nft = [self.dof_per_node * n + d for n in nodes for d in range(self.dof_per_node)]
+            H = np.asarray(rload.H)
+            u0 = np.asarray(rload.u0)
+            for ipt, (w, xi) in enumerate(self.edge_integration_points()):
+                st = self.ref_edge_coords(rload.edge, xi)
+                P = self.pmatrix(st)[nft]
+                J = self.edge_jacobian(rload.edge, p, xi)
+                kr = w * J * np.dot(np.dot(P, H), P.T)
+                fr = w * J * np.dot(P, np.dot(H, u0))
+                ke[np.ix_(nft, nft)] += kr
+                re[nft] += np.dot(kr, u[nft]) - fr
 
         return ke, re

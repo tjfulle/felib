@@ -26,25 +26,6 @@ class Material:
     ) -> tuple[NDArray, NDArray]:
         raise NotImplementedError
 
-    def eval_hybrid(
-        self,
-        hsv: NDArray,
-        e: NDArray,
-        de: NDArray,
-        time: Sequence[float],
-        dtime: float,
-        temp: float,
-        dtemp: float,
-        ndir: int,
-        nshr: int,
-        eleno: int,
-        step: int,
-        increment: int,
-    ) -> tuple[NDArray, NDArray, float]:
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not implement hybrid u-p support"
-        )
-
     def has_density(self) -> bool:
         return self._density is not None
 

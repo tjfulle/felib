@@ -165,7 +165,7 @@ class StaticStep(Step):
             elif isinstance(elements, int):
                 lids = [model.elem_map.local(elements)]
             else:
-                lids = [model.node_map.local(gid) for gid in elements]
+                lids = [model.elem_map.local(gid) for gid in elements]
             if ltype == "gravity":
                 pass
             elif ltype == "dload":
