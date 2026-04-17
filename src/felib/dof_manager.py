@@ -285,7 +285,9 @@ class DOFManager:
         # Basic sanity: masters must not be slaves in this simple implementation
         masters_list = sorted(master_set)
         if any(is_slave[np.array(masters_list, dtype=int)]):
-            raise RuntimeError("MPC masters that are also slaves are not supported by this implementation")
+            raise RuntimeError(
+                "MPC masters that are also slaves are not supported by this implementation"
+            )
 
         # Reduced DOFs are all DOFs that are not declared as slaves
         reduced_dofs = [i for i in range(ndof) if not is_slave[i]]
@@ -347,10 +349,7 @@ class DOFManager:
             raise ValueError("MPC equation must have at least two nonzero terms")
 
         slave, slave_coeff = active_terms[0]
-        masters = [
-            (master, -coeff / slave_coeff)
-            for master, coeff in active_terms[1:]
-        ]
+        masters = [(master, -coeff / slave_coeff) for master, coeff in active_terms[1:]]
         offset = rhs / slave_coeff
         return slave, masters, offset
 
@@ -431,9 +430,7 @@ class DOFManager:
         T, offset, _ = self.step_transform(ddofs, dvals)
         u_reduced = np.asarray(u_reduced, dtype=float)
         if T.shape[1] != len(u_reduced):
-            raise ValueError(
-                f"Reduced solution has length {len(u_reduced)}, expected {T.shape[1]}"
-            )
+            raise ValueError(f"Reduced solution has length {len(u_reduced)}, expected {T.shape[1]}")
         return T @ u_reduced + offset
 
     def compute_transform(self, fdofs: NDArray | None = None) -> tuple[NDArray, NDArray]:

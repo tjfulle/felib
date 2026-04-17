@@ -105,9 +105,7 @@ def run_example():
     for i, (coord, td, cd, diff, err) in enumerate(
         zip(tied_coords, tied_disp, cont_disp, disp_diff, error_norm)
     ):
-        print(
-            f"  Pt {i}: coord={coord}, tied={td}, cont={cd}, diff={diff}, err={err:.3e}"
-        )
+        print(f"  Pt {i}: coord={coord}, tied={td}, cont={cd}, diff={diff}, err={err:.3e}")
 
     print("--- Max / mean interface disp error ---")
     print(f"  max error = {np.max(error_norm):.3e}")

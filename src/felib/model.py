@@ -1,5 +1,6 @@
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
 from typing import Sequence
 

@@ -8,44 +8,6 @@ MapFunction = Callable[
 ]
 
 
-def plate_with_hole_Q4(
-    bbox: tuple[float, float, float, float],
-    nx: int = 1,
-    ny: int = 1,
-    biasx: float = 1.0,
-    biasy: float = 1.0,
-) -> tuple[list[list[float]], list[list[int]]]:
-    """
-    Structured rectangular quad mesh with optional bias.
-
-    Returns
-    -------
-    coords : [[nid, x, y], ...]   (1-based node ids)
-    conn   : [[eid, n1, n2, n3, n4], ...] (1-based ids)
-    """
-    xmin, xmax, ymin, ymax = bbox
-    lx = xmax - xmin
-    ly = ymax - ymin
-
-    def mapfn(
-        s: NDArray[np.float64],
-        t: NDArray[np.float64],
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        sb = s**biasx
-        tb = t**biasy
-        x = xmin + lx * sb
-        y = ymin + ly * tb
-        return x, y
-
-    coords0, conn0 = gridmesh2d(nx, ny, mapfn)
-
-    coords = [[nid + 1, float(x), float(y)] for nid, (x, y) in enumerate(coords0)]
-
-    conn = [[eid + 1, n1 + 1, n2 + 1, n3 + 1, n4 + 1] for eid, (n1, n2, n3, n4) in enumerate(conn0)]
-
-    return coords, conn
-
-
 def gridmesh2d(
     nx: int, ny: int, mapfn: MapFunction
 ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:

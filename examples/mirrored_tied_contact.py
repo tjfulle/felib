@@ -97,7 +97,11 @@ def _solve_tied_case(material, total_y_force: float, total_x_force: float):
     )
     # Interpret "top two nodes" as the two right-most nodes on the primary top edge.
     primary_top_two = _rightmost_nodes(
-        [node for node in mirrored.nodes if node[0] in mirrored.primary_nodes and np.isclose(node[2], 2.0)],
+        [
+            node
+            for node in mirrored.nodes
+            if node[0] in mirrored.primary_nodes and np.isclose(node[2], 2.0)
+        ],
         count=2,
     )
 
@@ -171,7 +175,9 @@ def _plot_displacement_comparison(
     solid_deformed = solid_mesh.coords + scale * solid_u
 
     fig, ax = plt.subplots(figsize=(8, 8))
-    _plot_edges(ax, solid_mesh.coords, solid_mesh.connect, color="0.78", linestyle=":", label="original")
+    _plot_edges(
+        ax, solid_mesh.coords, solid_mesh.connect, color="0.78", linestyle=":", label="original"
+    )
     _plot_edges(
         ax,
         tied_deformed,
@@ -192,7 +198,9 @@ def _plot_displacement_comparison(
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
-    ax.set_title(f"Mirrored tied vs solid displacement (scale={scale:.2g}, max error={max_error:.2e})")
+    ax.set_title(
+        f"Mirrored tied vs solid displacement (scale={scale:.2g}, max error={max_error:.2e})"
+    )
     ax.legend(loc="best")
     fig.tight_layout()
     fig.savefig(output, dpi=180)

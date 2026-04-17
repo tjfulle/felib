@@ -16,9 +16,7 @@ def exercise(esize: float = 0.05):
 
     class Top(felib.collections.NodeSelector):
         def __call__(self, node: felib.collections.Node) -> bool:
-            if node.on_boundary and node.x[1] > 0.999:
-                return True
-            return False
+            return node.on_boundary and node.x[1] > 0.999
 
     class Bottom(felib.collections.SideSelector):
         def __call__(self, side: felib.collections.Side):

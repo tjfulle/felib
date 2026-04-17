@@ -160,7 +160,9 @@ def test_tied_interface_matches_continuous():
     mesh_cont.block(name="Block-Cont", cell_type=felib.element.CPE4, elements=[1, 2])
 
     model_cont = felib.model.Model(mesh_cont, name="continuous")
-    model_cont.assign_properties(block="Block-Cont", element=felib.element.CPE4(), material=material)
+    model_cont.assign_properties(
+        block="Block-Cont", element=felib.element.CPE4(), material=material
+    )
 
     sim_cont = felib.simulation.Simulation(model_cont)
     step_cont = sim_cont.static_step()
@@ -233,10 +235,7 @@ def test_node_to_surface_tie_interpolates_nonconforming_interface():
     bottom_x = sim.dof_manager.global_dof(mesh.node_map.local(2), felib.X)
     top_x = sim.dof_manager.global_dof(mesh.node_map.local(3), felib.X)
     mid_eq = next(eq for eq in equations if int(eq[0]) == mid_x)
-    terms = {
-        int(mid_eq[i]): float(mid_eq[i + 1])
-        for i in range(0, len(mid_eq) - 1, 2)
-    }
+    terms = {int(mid_eq[i]): float(mid_eq[i + 1]) for i in range(0, len(mid_eq) - 1, 2)}
     assert terms[mid_x] == 1.0
     assert np.isclose(terms[bottom_x], -0.5)
     assert np.isclose(terms[top_x], -0.5)

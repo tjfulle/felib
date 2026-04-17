@@ -42,6 +42,7 @@ classifiers = [
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+exclude = ["src/felib/element/tmp.py"]
 
 format.indent-style = "space"
 format.quote-style = "double"
@@ -82,7 +83,8 @@ filterwarnings = [ "ignore::DeprecationWarning" ]
 
 [tool.mypy]
 exclude = [
-    "src/felib/trash/"
+    "src/felib/trash/",
+    "src/felib/element/tmp.py"
 ]
 
 [[tool.mypy.overrides]]
@@ -102,7 +104,7 @@ module = "distmeshpy.*"
 ignore_missing_imports = true
 
 [tool.ty.src]
-exclude = [ ]
+exclude = ["src/felib/element/tmp.py"]
 include = ["src", "tests"]
 
 

@@ -265,7 +265,7 @@ class StaticStep(Step):
             elif isinstance(elements, int):
                 lids = [model.elem_map.local(elements)]
             else:
-                lids = [model.node_map.local(gid) for gid in elements]
+                lids = [model.elem_map.local(gid) for gid in elements]
             if ltype == "gravity":
                 pass
             elif ltype == "dload":
@@ -497,10 +497,7 @@ class StaticStep(Step):
     ) -> list[tuple[int, int]]:
         primary_gids = self._node_gids(model, primary_nodes)
         secondary_gids = self._node_gids(model, secondary_nodes)
-        primary = [
-            (gid, model.coords[model.node_map.local(gid)])
-            for gid in primary_gids
-        ]
+        primary = [(gid, model.coords[model.node_map.local(gid)]) for gid in primary_gids]
         pairs: list[tuple[int, int]] = []
         for secondary_gid in secondary_gids:
             secondary_coord = model.coords[model.node_map.local(secondary_gid)]
@@ -519,9 +516,7 @@ class StaticStep(Step):
             raise ValueError("No tied node pairs with matching coordinates were found")
         return pairs
 
-    def _node_gids(
-        self, model: "Model", nodes: str | int | Sequence[int]
-    ) -> list[int]:
+    def _node_gids(self, model: "Model", nodes: str | int | Sequence[int]) -> list[int]:
         if isinstance(nodes, str):
             if nodes not in model.nodesets:
                 raise ValueError(f"nodeset {nodes} not defined")
@@ -594,8 +589,7 @@ class StaticStep(Step):
             ref_el = model.mesh.blocks[block_no].ref_el
             if side_id < 1 or side_id > ref_el.nedge:
                 raise ValueError(
-                    f"Side {side_id} is invalid for element {elem_gid}; "
-                    f"expected 1..{ref_el.nedge}"
+                    f"Side {side_id} is invalid for element {elem_gid}; expected 1..{ref_el.nedge}"
                 )
             side_specs.append((elem_lid, side_id - 1))
         if not side_specs:

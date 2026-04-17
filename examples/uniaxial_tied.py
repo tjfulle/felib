@@ -21,14 +21,19 @@ def uniaxial_tied():
     max_node = len(left_nodes)
     max_elem = len(left_elems)
     right_nodes_shifted = [[nid + max_node, x, y] for nid, x, y in right_nodes]
-    right_elems_shifted = [[eid + max_elem, n1 + max_node, n2 + max_node, n3 + max_node, n4 + max_node] for eid, n1, n2, n3, n4 in right_elems]
+    right_elems_shifted = [
+        [eid + max_elem, n1 + max_node, n2 + max_node, n3 + max_node, n4 + max_node]
+        for eid, n1, n2, n3, n4 in right_elems
+    ]
 
     nodes_tied = left_nodes + right_nodes_shifted
     elems_tied = left_elems + right_elems_shifted
 
     mesh_tied = felib.mesh.Mesh(nodes=nodes_tied, elements=elems_tied)
     mesh_tied.block(name="Left", cell_type=felib.element.Quad4, elements=list(range(1, 5 * 5 + 1)))
-    mesh_tied.block(name="Right", cell_type=felib.element.Quad4, elements=list(range(5 * 5 + 1, 2 * 5 * 5 + 1)))
+    mesh_tied.block(
+        name="Right", cell_type=felib.element.Quad4, elements=list(range(5 * 5 + 1, 2 * 5 * 5 + 1))
+    )
 
     mesh_tied.sideset(name="LeftEdge", region=lambda side: np.isclose(side.x[0], 0.0))
     mesh_tied.nodeset(name="RightEdge", nodes=[n for n, x, y in nodes_tied if np.isclose(x, 2.0)])
@@ -43,7 +48,7 @@ def uniaxial_tied():
     step_tied.boundary(nodes="RightEdge", dofs=[X, Y], value=0.0)
     step_tied.traction(sideset="LeftEdge", magnitude=traction_magnitude, direction=[1.0, 0.0])
 
-    # Tie left/right at interface using equivalent homogeneous MPC eqns (node-to-node on x=1.0). 
+    # Tie left/right at interface using equivalent homogeneous MPC eqns (node-to-node on x=1.0).
     left_interface = [(n, y) for n, x, y in nodes_tied if np.isclose(x, 1.0) and n <= max_node]
     right_interface = [(n, y) for n, x, y in nodes_tied if np.isclose(x, 1.0) and n > max_node]
     left_interface.sort(key=lambda pair: pair[1])
@@ -64,9 +69,13 @@ def uniaxial_tied():
     nodes_cont, elems_cont = felib.meshing.rectmesh((0.0, 2.0, 0.0, 1.0), nx=10, ny=5)
 
     mesh_cont = felib.mesh.Mesh(nodes=nodes_cont, elements=elems_cont)
-    mesh_cont.block(name="All", cell_type=felib.element.Quad4, elements=list(range(1, len(elems_cont) + 1)))
+    mesh_cont.block(
+        name="All", cell_type=felib.element.Quad4, elements=list(range(1, len(elems_cont) + 1))
+    )
     mesh_cont.sideset(name="LeftEdge", region=lambda side: np.isclose(side.x[0], 0.0))
-    mesh_cont.nodeset(name="RightEdge", nodes=[n for n, x, y in nodes_cont if np.isclose(x, 2.0)])  # fixed boundary nodes at right edge
+    mesh_cont.nodeset(
+        name="RightEdge", nodes=[n for n, x, y in nodes_cont if np.isclose(x, 2.0)]
+    )  # fixed boundary nodes at right edge
 
     model_cont = felib.model.Model(mesh_cont, name="uniaxial_cont")
     model_cont.assign_properties(block="All", element=felib.element.CPE4(), material=m)
@@ -122,21 +131,29 @@ def uniaxial_tied():
     stress_error = np.linalg.norm(stress_tied - stress_cont, axis=1)
 
     print("=== Uniaxial tied vs continuous error report ===")
-    print(f"Nodal displacement error (min/max/mean): {error_u.min():.3e} / {error_u.max():.3e} / {error_u.mean():.3e}")
-    print(f"Element strain error (min/max/mean): {strain_error.min():.3e} / {strain_error.max():.3e} / {strain_error.mean():.3e}")
-    print(f"Element stress error (min/max/mean): {stress_error.min():.3e} / {stress_error.max():.3e} / {stress_error.mean():.3e}")
-    print(f"Total force norm tied/cont: {np.linalg.norm(f_tied):.6e} / {np.linalg.norm(f_cont):.6e}")
+    print(
+        f"Nodal displacement error (min/max/mean): {error_u.min():.3e} / {error_u.max():.3e} / {error_u.mean():.3e}"
+    )
+    print(
+        f"Element strain error (min/max/mean): {strain_error.min():.3e} / {strain_error.max():.3e} / {strain_error.mean():.3e}"
+    )
+    print(
+        f"Element stress error (min/max/mean): {stress_error.min():.3e} / {stress_error.max():.3e} / {stress_error.mean():.3e}"
+    )
+    print(
+        f"Total force norm tied/cont: {np.linalg.norm(f_tied):.6e} / {np.linalg.norm(f_cont):.6e}"
+    )
 
     print("Plot files saved:")
     print(f"  tied: {model_tied.name}.exo")
     print(f"  cont: {model_cont.name}.exo")
 
     return {
-        "u_error" : error_u,
-        "strain_error" : strain_error,
-        "stress_error" : stress_error,
-        "force_tied" : f_tied,
-        "force_cont" : f_cont,
+        "u_error": error_u,
+        "strain_error": strain_error,
+        "stress_error": stress_error,
+        "force_tied": f_tied,
+        "force_cont": f_cont,
     }
 
 

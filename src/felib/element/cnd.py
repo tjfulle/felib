@@ -21,6 +21,7 @@ CPS4, CPE4
     Plane stress and plane strain 4‑node quadrilaterals.
 """
 
+from typing import TYPE_CHECKING
 from typing import Sequence
 
 import numpy as np
@@ -33,6 +34,11 @@ from .isop import IsoparametricElement
 from .reference import Quad4
 from .reference import Quad8
 from .reference import Tri3
+
+if TYPE_CHECKING:
+    from ..collections import DistributedLoad
+    from ..collections import DistributedSurfaceLoad
+    from ..collections import RobinLoad
 
 
 class ContinuumElement:
@@ -286,37 +292,93 @@ class CPE4(CPX4):
         return B
 
 
-class CPE4H(CPE4):
-    """Plane strain quadrilateral with hybrid u-p fomulation, constant pressure."""
+class CPE4R(CPS4):
+    """Plane strain constant strain quadrilateral element, reduced integration"""
 
-    uses_local_pressure = True
-    ndir = 3
-    nshr = 1
-    npressure = 1
+    gauss_pts, gauss_wts = gauss.gauss1x1()
+    hg_alpha: float = 0.1
 
-    def history_variables(self) -> list[str]:
-        names = super().history_variables()
-        names.extend(["p", "ev"])
-        return names
+    def eval(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time: Sequence[float],
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        du: NDArray,
+        pdata: NDArray,
+        dloads: list["DistributedLoad"] | None = None,
+        dsloads: list[tuple[int, "DistributedSurfaceLoad"]] | None = None,
+        rloads: list["RobinLoad"] | None = None,
+    ) -> tuple[NDArray, NDArray]:
+        ke, re = super().eval(
+            material,
+            step,
+            increment,
+            time,
+            dt,
+            eleno,
+            p,
+            u,
+            du,
+            pdata,
+            dloads=dloads,
+            dsloads=dsloads,
+            rloads=rloads,
+        )
+        khg, rhg = self.hourglass_terms(p, u)
+        ke += khg
+        re += rhg
+        return ke, re
 
-    def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
-        dNdx = self.shape_gradient(p, xi)
-        B = np.zeros((4, 8))
-        B[0, 0::2] = dNdx[0]
-        B[1, 1::2] = dNdx[1]
-        B[3, 0::2] = dNdx[1]
-        B[3, 1::2] = dNdx[0]
-        return B
+    def hourglass_terms(self, p, u):
+        ndof = self.nnode * self.dof_per_node
+        Khg = np.zeros((ndof, ndof))
+        Rhg = np.zeros(ndof)
+        xi = np.zeros(2)
+        J = self.jacobian(p, xi)
+        for h in self.hourglass_vectors(p):
+            q = np.dot(h, u)
+            Khg += np.outer(h, h)
+            Rhg += q * h
+        scale = self.hg_alpha * J
+        Khg *= scale
+        Rhg *= scale
+        return Khg, Rhg
 
-    def bmatrix_vol(self, p: NDArray, xi: NDArray) -> NDArray:
-        dNdx = self.shape_gradient(p, xi)
-        Bv = np.zeros((1, 8))
-        Bv[0, 0::2] = dNdx[0, :]
-        Bv[0, 1::2] = dNdx[1, :]
-        return Bv
+    def hourglass_vectors(self, p: NDArray) -> list[NDArray]:
+        # shape gradients at center
+        xi = np.zeros(2)
+        dNdx = self.shape_gradient(p, xi)  # (2, 4)
 
-    def pressure_shape(self, xi: NDArray) -> NDArray:
-        return np.ones((1, self.npressure), dtype=float)
+        # canonical scalar patterns (node space)
+        patterns = [
+            np.array([1, -1, 1, -1], dtype=float),
+            np.array([1, 1, -1, -1], dtype=float),
+        ]
+
+        H = []
+
+        for g in patterns:
+            g = g.copy()
+            # ---- projection: remove strain-producing part ----
+            for i in range(dNdx.shape[0]):  # x,y directions
+                xi_i = np.dot(g, p[:, i])  # same as old code
+                for a in range(len(g)):
+                    g[a] -= xi_i * dNdx[i, a]
+            # normalize
+            nrm = np.linalg.norm(g)
+            if nrm > 1e-12:
+                g /= nrm
+            # expand to DOFs (u,v)
+            h = np.zeros(2 * len(g))
+            h[0::2] = g
+            h[1::2] = g
+            H.append(h)
+        return H
 
 
 class CPX8(Quad8, ContinuumElement, IsoparametricElement):
@@ -380,3 +442,117 @@ class CPE8(CPX8):
         B[3, 0::2] = dNdx[1]
         B[3, 1::2] = dNdx[0]
         return B
+
+
+class CPS4I(CPS4):
+    """
+    Quad4 with incompatible modes (shear improved).
+
+    - Full integration (2x2)
+    - Uses 2 internal incompatible DOFs
+    - Static condensation applied as a correction to Kdd
+    """
+
+    # ------------------------------------------------------------
+    # Main eval with static condensation correction
+    # ------------------------------------------------------------
+    def eval(
+        self,
+        material: Material,
+        step: int,
+        increment: int,
+        time,
+        dt: float,
+        eleno: int,
+        p: NDArray,
+        u: NDArray,
+        du: NDArray,
+        pdata: NDArray,
+        dloads=None,
+        dsloads=None,
+        rloads=None,
+    ):
+        # --- get standard stiffness + all load contributions ---
+        hsv = pdata.copy()
+        ke, re = super().eval(
+            material,
+            step,
+            increment,
+            time,
+            dt,
+            eleno,
+            p,
+            u,
+            du,
+            pdata,
+            dloads=dloads,
+            dsloads=dsloads,
+            rloads=rloads,
+        )
+
+        ndof = self.nnode * self.dof_per_node
+        na = 4  # incompatible DOFs
+
+        Kda = np.zeros((ndof, na), dtype=float)
+        Kaa = np.zeros((na, na), dtype=float)
+        ra = np.zeros(na, dtype=float)
+
+        # --------------------------------------------------------
+        # Second loop: build coupling terms
+        # --------------------------------------------------------
+        for ipt, (w, xi) in enumerate(self.integration_points()):
+            J = self.jacobian(p, xi)
+            B = self.bmatrix(p, xi)
+            G = self.gmatrix(p, xi, J)
+
+            # consistent strain state
+            e = np.dot(B, u)
+            de = np.dot(B, du)
+
+            D, s = self.update_state(
+                material,
+                step,
+                increment,
+                time,
+                dt,
+                eleno,
+                p,
+                u,
+                e,
+                de,
+                hsv[ipt],
+            )
+            Kda += w * J * np.dot(np.dot(B.T, D), G)
+            Kaa += w * J * np.dot(np.dot(G.T, D), G)
+            ra += w * J * np.dot(G.T, s)
+
+        # --------------------------------------------------------
+        # Static condensation: K = Kdd - Kda Kaa^{-1} Kda^T
+        # --------------------------------------------------------
+        ke -= np.dot(np.dot(Kda, np.linalg.inv(Kaa)), Kda.T)
+        re -= np.dot(np.dot(Kda, np.linalg.inv(Kaa)), ra)
+        return ke, re
+
+    def gmatrix(self, p: NDArray, xi: NDArray, J: float) -> NDArray:
+        """
+        Construct incompatible strain-displacement matrix G.
+
+        Algorithm in
+
+        The Finite Element Method:  Its Basis and Fundamentals
+        By Olek C Zienkiewicz, Robert L Taylor, J.Z. Zhu
+
+        """
+        dNdxi = self.shape_derivative(np.zeros(2))
+        dxdxi = np.dot(dNdxi, p)
+        dxidx = np.linalg.inv(dxdxi)
+        J0 = np.linalg.det(dxidx)
+
+        s, t = xi
+        dNdxi = np.array([[-2.0 * s, 0.0], [0.0, -2.0 * t]], dtype=float)
+        dNdx = J0 / J * np.dot(dxidx, dNdxi)
+
+        G1 = np.array([[dNdx[0, 0], 0], [0, dNdx[0, 1]], [dNdx[0, 1], dNdx[0, 0]]])
+        G2 = np.array([[dNdx[1, 0], 0], [0, dNdx[1, 1]], [dNdx[1, 1], dNdx[1, 0]]])
+        G = np.concatenate((G1, G2), axis=1)
+        return G

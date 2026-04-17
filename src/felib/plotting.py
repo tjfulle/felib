@@ -59,10 +59,14 @@ def mesh_plot_quad4(
     ax: Axes | None | None = None,
     label: str | None = None,
     color: str = "k",
+    lw: float = 0.6,
+    ls: str = "-",
 ) -> tuple[Figure | SubFigure, Axes]:
     from .element import Quad4
 
-    return mesh_plot(Quad4(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color)
+    return mesh_plot(
+        Quad4(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color, lw=lw, ls=ls
+    )
 
 
 def mesh_plot_quad8(
@@ -72,10 +76,14 @@ def mesh_plot_quad8(
     ax: Axes | None | None = None,
     label: str | None = None,
     color: str = "k",
+    lw: float = 0.6,
+    ls: str = "-",
 ) -> tuple[Figure | SubFigure, Axes]:
     from .element import Quad8
 
-    return mesh_plot(Quad8(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color)
+    return mesh_plot(
+        Quad8(), p, connect, label=label, n_edge=n_edge, ax=ax, color=color, lw=lw, ls=ls
+    )
 
 
 def mesh_plot(
@@ -86,6 +94,8 @@ def mesh_plot(
     ax: Axes | None | None = None,
     label: str | None = None,
     color: str = "k",
+    lw: float = 0.6,
+    ls: str = "-",
 ) -> tuple[Figure | SubFigure, Axes]:
     """
     Plot FE mesh connectivity with correct element edges.
@@ -97,11 +107,12 @@ def mesh_plot(
         title   : plot title
         n_edge  : number of points per edge to draw curved edges
     """
-    fig: Figure | SubFigure
+    fig: Figure | SubFigure | None
     if ax is None:
         fig, ax = plt.subplots(figsize=(7, 5))
     else:
         fig = ax.figure
+    assert fig is not None
     seen: set[tuple[int, ...]] = set()
     linspace = np.linspace(-1.0, 1.0, n_edge)
     for elem in connect:
@@ -111,11 +122,9 @@ def mesh_plot(
             if ix in seen:
                 continue
             edge_pts = np.array([element.interpolate_edge(edge_no, pe, x) for x in linspace])
-            ax.plot(edge_pts[:, 0], edge_pts[:, 1], color=color, linewidth=0.6, label=label)
+            ax.plot(edge_pts[:, 0], edge_pts[:, 1], color=color, linewidth=lw, label=label, ls=ls)
             label = None
             seen.add(ix)
-    plt.tight_layout()
-    plt.show()
     return fig, ax
 
 
@@ -144,72 +153,6 @@ def tplot(p: NDArray, t: NDArray, z: NDArray, title: str = "FEA Solution") -> No
     plt.clf()
     plt.cla()
     plt.close("all")
-
-
-def _triangles_from_connect(connect: NDArray) -> NDArray:
-    connect = np.asarray(connect, dtype=int)
-    if connect.ndim != 2:
-        raise ValueError("Expected a 2D connectivity array")
-
-    valid = connect[connect >= 0]
-    if valid.size == 0:
-        raise ValueError("Connectivity array does not contain any valid nodes")
-
-    triangles: list[list[int]] = []
-    for elem in connect:
-        nodes = [int(node) for node in elem if node >= 0]
-        if len(nodes) == 3:
-            triangles.append(nodes)
-        elif len(nodes) == 4:
-            triangles.append([nodes[0], nodes[1], nodes[2]])
-            triangles.append([nodes[0], nodes[2], nodes[3]])
-        elif len(nodes) > 4:
-            for i in range(1, len(nodes) - 1):
-                triangles.append([nodes[0], nodes[i], nodes[i + 1]])
-        else:
-            raise ValueError("Each element must have at least 3 valid nodes to plot a heat map")
-
-    return np.asarray(triangles, dtype=int)
-
-
-def nodal_heatmap(
-    p: NDArray,
-    connect: NDArray,
-    z: NDArray,
-    *,
-    title: str = "Nodal Field",
-    label: str | None = None,
-    ax: Axes | None = None,
-    cmap: str = "turbo",
-    show_mesh: bool = True,
-    mesh_color: str = "k",
-    mesh_linewidth: float = 0.3,
-) -> tuple[Figure | SubFigure, Axes]:
-    """Plot a nodal scalar field as a 2D heat map over the mesh."""
-
-    fig: Figure | SubFigure
-    created_axes = ax is None
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(7, 5))
-    else:
-        fig = ax.figure
-
-    triangles = _triangles_from_connect(connect)
-    triang = tri.Triangulation(p[:, 0], p[:, 1], triangles)
-    contour = ax.tricontourf(triang, z, levels=50, cmap=cmap)
-    if show_mesh:
-        ax.triplot(triang, color=mesh_color, linewidth=mesh_linewidth)
-
-    cbar = fig.colorbar(contour, ax=ax, label=label)
-    cbar.ax.ticklabel_format(style="sci", axis="y", scilimits=(0, 0))
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_title(title)
-    ax.axis("equal")
-    if created_axes:
-        plt.tight_layout()
-        plt.show()
-    return fig, ax
 
 
 def tplot3d(
