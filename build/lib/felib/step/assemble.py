@@ -27,7 +27,6 @@ class AssemblyKernel:
         dsloads: DSLoadT,
         rloads: RLoadT,
         equations: list[list],
-        dof_manager: Any | None = None,
         args: tuple[Any, ...] = (),
     ) -> None:
         self.assemble_fun = assemble_fun
@@ -46,9 +45,6 @@ class AssemblyKernel:
         self.stiff: NDArray = np.empty(0, dtype=float)
         self.resid: NDArray = np.empty(0, dtype=float)
         self.fargs = args
-        self.dof_manager = dof_manager
-        if self.dof_manager is None and len(args) > 0 and hasattr(args[0], "step_transform"):
-            self.dof_manager = args[0]
 
     def __call__(self, x: NDArray):
         """
@@ -134,35 +130,6 @@ class AssemblyKernel:
         - Lagrange multipliers represent constraint reaction forces.
         """
         ndof = len(self.u0)
-        if self._use_mpc_reduction():
-            assert self.dof_manager is not None
-            T, offset, _ = self.dof_manager.step_transform(self.ddofs, self.dvals)
-            if len(x) != T.shape[1]:
-                raise RuntimeError(
-                    f"MPC reduced iterate has length {len(x)}, expected {T.shape[1]}"
-                )
-            u = T @ x + offset
-            du = u - self.u0
-
-            self.stiff, self.resid = self.assemble_fun(
-                self.step,
-                self.increment,
-                self.time,
-                self.dt,
-                u,
-                du,
-                self.dloads,
-                self.dsloads,
-                self.rloads,
-                *self.fargs,
-            )
-            for dof, value in self.nbcs:
-                self.resid[dof] -= value
-
-            K_red = T.T @ self.stiff @ T
-            R_red = T.T @ self.resid
-            return K_red, R_red
-
         fdofs = np.array(sorted(set(range(ndof)) - set(self.ddofs)))
         nf = len(fdofs)
         neq = len(self.equations) if self.equations else 0
@@ -192,16 +159,39 @@ class AssemblyKernel:
         if neq == 0:
             return K_ff, R_f
 
+        # NOTE: Constraint handling currently uses an augmented Lagrange
+        # formulation (C, r). To support homogeneous-MPC tied contact we
+        # provide an alternate path here that applies a transformation
+        # `T` produced by an `MPCConstraint` or DOFManager map instead of forming
+        # the saddle-point system.
+        #
+        # If the manager has a transform for the current free DOFs, reduce K/R:
+        #
+        #   if mpc is present:
+        #       T, offset = dof_manager.compute_transform(fdofs)
+        #       K_red = T.T @ K_ff @ T
+        #       R_red = T.T @ (R_f - K_ff @ offset)
+        #       return K_red, R_red
+        #
+        # This keeps the existing augmented path as a fallback.
+        dof_manager = None
+        if len(self.fargs) > 0 and hasattr(self.fargs[0], "compute_transform"):
+            dof_manager = self.fargs[0]
+
+        if dof_manager is not None:
+            try:
+                T, offset = dof_manager.compute_transform(fdofs)
+                # If this is a valid transformation, use the reduced system.
+                K_red = T.T @ K_ff @ T
+                R_red = T.T @ (R_f - K_ff @ offset)
+                return K_red, R_red
+            except RuntimeError:
+                # No MPC transform has been built; fall back to C/Lagrange path.
+                pass
+
         C, r = build_linear_constraint(ndof, self.equations)
         C_f = C[:, fdofs]
         g = np.dot(C, u) - r
         Ka = np.block([[K_ff, C_f.T], [C_f, np.zeros((neq, neq))]])
         Ra = np.hstack([R_f + np.dot(C_f.T, x[nf:]), g])
         return Ka, Ra
-
-    def _use_mpc_reduction(self) -> bool:
-        if self.dof_manager is None:
-            return False
-        if not getattr(self.dof_manager, "has_mpc_transform", False):
-            return False
-        return bool(self.dof_manager.can_apply_mpc_reduction(self.ddofs))

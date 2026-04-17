@@ -200,8 +200,6 @@ class HeatTransferStep(Step):
                 mpc.extend([DOF, coeff])
             mpc.append(rhs)
             mpcs.append(mpc)
-        for constraint in model.constraints:
-            mpcs.append(list(constraint.to_tuple()))
         return mpcs
 
 

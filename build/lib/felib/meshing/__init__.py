@@ -3,9 +3,7 @@ from .quad import gridmesh2d_quad8
 from .quad import rectmesh
 from .quad import rectmesh_quad8
 from .quad import wedgemesh
-from .tied import TiedMesh
-from .tied import matching_node_pairs
-from .tied import mirrored_tied_mesh
+from .quad import plate_with_hole_Q4
 from .tri import plate_with_hole
 from .tri import uniform_plate
 
@@ -17,7 +15,5 @@ __all__ = [
     "gridmesh2d",
     "rectmesh_quad8",
     "gridmesh2d_quad8",
-    "TiedMesh",
-    "matching_node_pairs",
-    "mirrored_tied_mesh",
+    "plate_with_hole_Q4",
 ]

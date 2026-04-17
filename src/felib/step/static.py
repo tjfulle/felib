@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 class StaticStep(Step):
     def __init__(self, name: str, ndim: int, period: float = 1.0, **options: Any) -> None:
         super().__init__(name=name, ndim=ndim, period=period)
+        self.auto_tie_interfaces = bool(options.pop("auto_tie_interfaces", True))
         self.solver_opts = options
 
     def boundary(
@@ -95,9 +96,108 @@ class StaticStep(Step):
             coeffs.append(float(triples[i + 2]))
         constraints[f"constraint-{len(constraints)}"] = (nodes, dofs, coeffs, rhs)
 
+    def tie_nodes(
+        self,
+        pairs: Sequence[Sequence[int]] | None = None,
+        *,
+        secondary_nodes: int | Sequence[int] | None = None,
+        primary_nodes: int | Sequence[int] | None = None,
+        dofs: int | Sequence[int] | None = None,
+    ) -> None:
+        """
+        Tie manually specified node pairs with homogeneous equation constraints.
+
+        ``pairs`` and ``secondary_nodes``/``primary_nodes`` use
+        ``(secondary_node, primary_node)`` ordering.
+        """
+        if pairs is not None and (secondary_nodes is not None or primary_nodes is not None):
+            raise ValueError("Expected pairs or secondary_nodes/primary_nodes, not both")
+        if pairs is None:
+            if secondary_nodes is None or primary_nodes is None:
+                raise ValueError("Expected pairs or both secondary_nodes and primary_nodes")
+            secondary = _as_list(secondary_nodes)
+            primary = _as_list(primary_nodes)
+            if len(secondary) != len(primary):
+                raise ValueError("secondary_nodes and primary_nodes must have the same length")
+            pairs = list(zip(secondary, primary))
+
+        tie_dofs = self._tie_dofs(dofs)
+        for pair in pairs:
+            if len(pair) != 2:
+                raise ValueError("Each tied node pair must be (secondary_node, primary_node)")
+            secondary, primary = int(pair[0]), int(pair[1])
+            for dof in tie_dofs:
+                self.equation(secondary, dof, 1.0, primary, dof, -1.0, 0.0)
+
+    def tied_nodes(self, *args: Any, **kwargs: Any) -> None:
+        self.tie_nodes(*args, **kwargs)
+
+    def tie_matching_nodes(
+        self,
+        *,
+        secondary_nodes: str | int | Sequence[int],
+        primary_nodes: str | int | Sequence[int],
+        dofs: int | Sequence[int] | None = None,
+        tol: float = 1e-12,
+    ) -> None:
+        """
+        Tie nodes by matching coordinates between secondary and primary sets.
+
+        Nodes without a coordinate match are ignored, which lets callers pass
+        entire mirrored mesh halves while only coincident interface nodes are
+        constrained.
+        """
+        if tol < 0.0:
+            raise ValueError("tol must be non-negative")
+        ties = self.metadata["tied_node_matches"]
+        ties[f"tied-node-match-{len(ties)}"] = (
+            secondary_nodes,
+            primary_nodes,
+            self._tie_dofs(dofs),
+            float(tol),
+        )
+
+    def tie_nodes_to_surface(
+        self,
+        *,
+        secondary_nodes: str | int | Sequence[int],
+        primary_sides: str | Sequence[Sequence[int]],
+        dofs: int | Sequence[int] | None = None,
+        tol: float = 1e-8,
+    ) -> None:
+        """
+        Tie secondary nodes to a nonconforming primary surface.
+
+        Each secondary node is projected onto the nearest primary side and
+        constrained to the primary side's nodal interpolation. ``primary_sides``
+        may be a sideset name or explicit ``(element_gid, side_id)`` pairs where
+        ``side_id`` is 1-based, matching :meth:`Mesh.sideset`.
+        """
+        if tol < 0.0:
+            raise ValueError("tol must be non-negative")
+        ties = self.metadata["tied_node_surfaces"]
+        ties[f"tied-node-surface-{len(ties)}"] = (
+            secondary_nodes,
+            primary_sides,
+            self._tie_dofs(dofs),
+            float(tol),
+        )
+
+    def tie_nonmatching_nodes(self, *args: Any, **kwargs: Any) -> None:
+        self.tie_nodes_to_surface(*args, **kwargs)
+
+    def _tie_dofs(self, dofs: int | Sequence[int] | None) -> list[int]:
+        if dofs is None:
+            return list(range(self.ndim))
+        if isinstance(dofs, int):
+            return [int(dofs)]
+        return [int(dof) for dof in dofs]
+
     def compile(
         self, model: "Model", dof_manager: "DOFManager", parent: CompiledStep | None
     ) -> CompiledStep:
+        equations = self.compile_constraints(model, dof_manager)
+        self._configure_mpc_map(dof_manager, equations)
         return CompiledStaticStep(
             name=self.name,
             parent=parent,
@@ -107,7 +207,7 @@ class StaticStep(Step):
             dloads=self.compile_dloads(model),
             dsloads=self.compile_dsloads(model),
             rloads=self.compile_rloads(model),
-            equations=self.compile_constraints(model, dof_manager),
+            equations=equations,
             solver_options=self.solver_opts,
         )
 
@@ -232,17 +332,372 @@ class StaticStep(Step):
         coeffs: list[float]
         rhs: float = 0.0
         mpcs: list[list[int | float]] = []
+        seen: set[tuple] = set()
         for nodes, dofs, coeffs, rhs in self.metadata.get("constraints", {}).values():
-            mpc: list[int | float] = []
-            for gid, dof, coeff in zip(nodes, dofs, coeffs):
-                if gid not in model.node_map:
-                    raise ValueError(f"Node {gid} is not defined")
-                lid = model.node_map.local(gid)
-                DOF = dof_manager.global_dof(lid, dof)
-                mpc.extend([DOF, coeff])
-            mpc.append(rhs)
-            mpcs.append(mpc)
+            self._append_unique_constraint(
+                mpcs,
+                seen,
+                self._compile_constraint(model, dof_manager, nodes, dofs, coeffs, rhs),
+            )
+        for secondary_nodes, primary_nodes, dofs, tol in self.metadata.get(
+            "tied_node_matches", {}
+        ).values():
+            pairs = self._matching_tied_node_pairs(
+                model,
+                secondary_nodes=secondary_nodes,
+                primary_nodes=primary_nodes,
+                tol=tol,
+            )
+            for secondary, primary in pairs:
+                for dof in dofs:
+                    self._append_unique_constraint(
+                        mpcs,
+                        seen,
+                        self._compile_constraint(
+                            model,
+                            dof_manager,
+                            [secondary, primary],
+                            [dof, dof],
+                            [1.0, -1.0],
+                            0.0,
+                        ),
+                    )
+        for secondary_nodes, primary_sides, dofs, tol in self.metadata.get(
+            "tied_node_surfaces", {}
+        ).values():
+            for secondary, primary_gids, weights in self._node_surface_ties(
+                model,
+                secondary_nodes=secondary_nodes,
+                primary_sides=primary_sides,
+                tol=tol,
+            ):
+                for dof in dofs:
+                    nodes, coeffs = self._node_surface_constraint_terms(
+                        secondary,
+                        primary_gids,
+                        weights,
+                    )
+                    if not nodes:
+                        continue
+                    self._append_unique_constraint(
+                        mpcs,
+                        seen,
+                        self._compile_constraint(
+                            model,
+                            dof_manager,
+                            nodes,
+                            [dof] * len(nodes),
+                            coeffs,
+                            0.0,
+                        ),
+                    )
+        if self.auto_tie_interfaces:
+            for secondary, primary in model.mesh.tied_node_pairs:
+                for dof in self._tie_dofs(None):
+                    self._append_unique_constraint(
+                        mpcs,
+                        seen,
+                        self._compile_constraint(
+                            model,
+                            dof_manager,
+                            [secondary, primary],
+                            [dof, dof],
+                            [1.0, -1.0],
+                            0.0,
+                        ),
+                    )
+        for constraint in model.constraints:
+            self._append_unique_constraint(
+                mpcs,
+                seen,
+                self._compile_mpc_constraint(constraint),
+            )
         return mpcs
+
+    def _configure_mpc_map(
+        self,
+        dof_manager: "DOFManager",
+        equations: list[list[int | float]],
+    ) -> None:
+        dof_manager.clear_mpc_map()
+        if not equations:
+            return
+        if not self._homogeneous_constraints(equations):
+            return
+        try:
+            dof_manager.build_mpc_map(equations)
+        except (RuntimeError, ValueError):
+            dof_manager.clear_mpc_map()
+
+    @staticmethod
+    def _homogeneous_constraints(
+        equations: list[list[int | float]],
+        *,
+        tol: float = 1e-14,
+    ) -> bool:
+        return all(abs(float(equation[-1])) <= tol for equation in equations)
+
+    def _append_unique_constraint(
+        self,
+        mpcs: list[list[int | float]],
+        seen: set[tuple],
+        mpc: list[int | float],
+    ) -> None:
+        key = self._constraint_key(mpc)
+        if key in seen:
+            return
+        seen.add(key)
+        mpcs.append(mpc)
+
+    def _constraint_key(self, mpc: list[int | float]) -> tuple:
+        rhs = float(mpc[-1])
+        terms = [(int(mpc[i]), float(mpc[i + 1])) for i in range(0, len(mpc) - 1, 2)]
+        terms.sort(key=lambda item: item[0])
+        if terms:
+            first_coeff = terms[0][1]
+            if first_coeff < 0.0:
+                terms = [(dof, -coeff) for dof, coeff in terms]
+                rhs = -rhs
+        return tuple(terms + [("rhs", rhs)])
+
+    def _compile_mpc_constraint(self, constraint) -> list[int | float]:
+        slave_dof, masters, offset = constraint.to_tuple()
+        mpc: list[int | float] = [slave_dof, 1.0]
+        for master_dof, coeff in masters:
+            mpc.extend([master_dof, -coeff])
+        mpc.append(offset)
+        return mpc
+
+    def _compile_constraint(
+        self,
+        model: "Model",
+        dof_manager: "DOFManager",
+        nodes: Sequence[int],
+        dofs: Sequence[int],
+        coeffs: Sequence[float],
+        rhs: float,
+    ) -> list[int | float]:
+        mpc: list[int | float] = []
+        for gid, dof, coeff in zip(nodes, dofs, coeffs):
+            if gid not in model.node_map:
+                raise ValueError(f"Node {gid} is not defined")
+            lid = model.node_map.local(gid)
+            DOF = dof_manager.global_dof(lid, dof)
+            mpc.extend([DOF, coeff])
+        mpc.append(rhs)
+        return mpc
+
+    def _matching_tied_node_pairs(
+        self,
+        model: "Model",
+        *,
+        secondary_nodes: str | int | Sequence[int],
+        primary_nodes: str | int | Sequence[int],
+        tol: float,
+    ) -> list[tuple[int, int]]:
+        primary_gids = self._node_gids(model, primary_nodes)
+        secondary_gids = self._node_gids(model, secondary_nodes)
+        primary = [(gid, model.coords[model.node_map.local(gid)]) for gid in primary_gids]
+        pairs: list[tuple[int, int]] = []
+        for secondary_gid in secondary_gids:
+            secondary_coord = model.coords[model.node_map.local(secondary_gid)]
+            matches = [
+                primary_gid
+                for primary_gid, primary_coord in primary
+                if np.allclose(secondary_coord, primary_coord, atol=tol, rtol=0.0)
+            ]
+            if len(matches) > 1:
+                raise ValueError(
+                    f"Secondary node {secondary_gid} matches multiple primary nodes: {matches}"
+                )
+            if len(matches) == 1 and matches[0] != secondary_gid:
+                pairs.append((secondary_gid, matches[0]))
+        if not pairs:
+            raise ValueError("No tied node pairs with matching coordinates were found")
+        return pairs
+
+    def _node_gids(self, model: "Model", nodes: str | int | Sequence[int]) -> list[int]:
+        if isinstance(nodes, str):
+            if nodes not in model.nodesets:
+                raise ValueError(f"nodeset {nodes} not defined")
+            gids = [model.node_map[lid] for lid in model.nodesets[nodes]]
+        elif isinstance(nodes, int):
+            gids = [int(nodes)]
+        else:
+            gids = [int(gid) for gid in nodes]
+        for gid in gids:
+            if gid not in model.node_map:
+                raise ValueError(f"Node {gid} is not defined")
+        return list(dict.fromkeys(gids))
+
+    def _node_surface_ties(
+        self,
+        model: "Model",
+        *,
+        secondary_nodes: str | int | Sequence[int],
+        primary_sides: str | Sequence[Sequence[int]],
+        tol: float,
+    ) -> list[tuple[int, list[int], NDArray]]:
+        secondary_gids = self._node_gids(model, secondary_nodes)
+        side_specs = self._side_specs(model, primary_sides)
+        ties: list[tuple[int, list[int], NDArray]] = []
+        for secondary_gid in secondary_gids:
+            x = model.coords[model.node_map.local(secondary_gid)]
+            best: tuple[float, list[int], NDArray] | None = None
+            for elem_lid, side_no in side_specs:
+                candidate = self._project_to_primary_side(
+                    model,
+                    elem_lid=elem_lid,
+                    side_no=side_no,
+                    x=x,
+                    tol=tol,
+                )
+                if candidate is None:
+                    continue
+                distance, primary_gids, weights = candidate
+                if best is None or distance < best[0]:
+                    best = (distance, primary_gids, weights)
+            if best is None:
+                raise ValueError(
+                    f"Secondary node {secondary_gid} could not be projected onto "
+                    f"the primary surface within tol={tol}"
+                )
+            _, primary_gids, weights = best
+            ties.append((secondary_gid, primary_gids, weights))
+        return ties
+
+    def _side_specs(
+        self,
+        model: "Model",
+        primary_sides: str | Sequence[Sequence[int]],
+    ) -> list[tuple[int, int]]:
+        if isinstance(primary_sides, str):
+            if primary_sides not in model.sidesets:
+                raise ValueError(f"side set {primary_sides} not defined")
+            return list(model.sidesets[primary_sides])
+
+        side_specs: list[tuple[int, int]] = []
+        for side in primary_sides:
+            if len(side) != 2:
+                raise ValueError("Primary sides must be (element_gid, side_id) pairs")
+            elem_gid = int(side[0])
+            side_id = int(side[1])
+            if elem_gid not in model.elem_map:
+                raise ValueError(f"Element {elem_gid} is not defined")
+            elem_lid = model.elem_map.local(elem_gid)
+            block_no = model.block_elem_map[elem_lid]
+            ref_el = model.mesh.blocks[block_no].ref_el
+            if side_id < 1 or side_id > ref_el.nedge:
+                raise ValueError(
+                    f"Side {side_id} is invalid for element {elem_gid}; expected 1..{ref_el.nedge}"
+                )
+            side_specs.append((elem_lid, side_id - 1))
+        if not side_specs:
+            raise ValueError("primary_sides is empty")
+        return side_specs
+
+    def _project_to_primary_side(
+        self,
+        model: "Model",
+        *,
+        elem_lid: int,
+        side_no: int,
+        x: NDArray,
+        tol: float,
+    ) -> tuple[float, list[int], NDArray] | None:
+        block_no = model.block_elem_map[elem_lid]
+        block = model.mesh.blocks[block_no]
+        elem_gid = model.elem_map[elem_lid]
+        block_elem_lid = block.elem_map.local(elem_gid)
+        conn = block.connect[block_elem_lid]
+        edge_ix = block.ref_el.edge_nodes(side_no)
+        primary_gids = [block.node_map[int(node_lid)] for node_lid in conn[edge_ix]]
+        primary_coords = np.array(
+            [model.coords[model.node_map.local(gid)] for gid in primary_gids],
+            dtype=float,
+        )
+        projection = self._project_point_to_edge(
+            primary_coords,
+            x,
+            block.ref_el,
+            tol=tol,
+        )
+        if projection is None:
+            return None
+        xi, distance = projection
+        weights = block.ref_el.edge_shape(xi, len(primary_gids))
+        return distance, primary_gids, weights
+
+    def _project_point_to_edge(
+        self,
+        edge_coords: NDArray,
+        x: NDArray,
+        ref_el,
+        *,
+        tol: float,
+    ) -> tuple[float, float] | None:
+        if len(edge_coords) == 2:
+            p0, p1 = edge_coords
+            tangent = p1 - p0
+            length2 = float(np.dot(tangent, tangent))
+            if length2 <= 0.0:
+                raise ValueError("Primary side has zero length")
+            t = float(np.dot(x - p0, tangent) / length2)
+            t_clamped = min(1.0, max(0.0, t))
+            xi = 2.0 * t_clamped - 1.0
+            closest = p0 + t_clamped * tangent
+            distance = float(np.linalg.norm(x - closest))
+            if distance <= tol:
+                return xi, distance
+            return None
+
+        sample_xis = np.linspace(-1.0, 1.0, 9)
+        distances = [
+            np.linalg.norm(np.dot(ref_el.edge_shape(float(xi), len(edge_coords)), edge_coords) - x)
+            for xi in sample_xis
+        ]
+        xi = float(sample_xis[int(np.argmin(distances))])
+        for _ in range(25):
+            shape = ref_el.edge_shape(xi, len(edge_coords))
+            dshape = ref_el.edge_shape_derivative(xi, len(edge_coords))
+            closest = np.dot(shape, edge_coords)
+            tangent = np.dot(dshape, edge_coords)
+            denom = float(np.dot(tangent, tangent))
+            if denom <= 0.0:
+                raise ValueError("Primary side has zero tangent during projection")
+            delta = float(np.dot(closest - x, tangent) / denom)
+            next_xi = float(np.clip(xi - delta, -1.0, 1.0))
+            if abs(next_xi - xi) <= max(tol, 1e-12):
+                xi = next_xi
+                break
+            xi = next_xi
+
+        closest = np.dot(ref_el.edge_shape(xi, len(edge_coords)), edge_coords)
+        distance = float(np.linalg.norm(x - closest))
+        if distance <= tol:
+            return xi, distance
+        return None
+
+    @staticmethod
+    def _node_surface_constraint_terms(
+        secondary: int,
+        primary_gids: Sequence[int],
+        weights: Sequence[float],
+        *,
+        tol: float = 1e-14,
+    ) -> tuple[list[int], list[float]]:
+        terms: dict[int, float] = {int(secondary): 1.0}
+        for primary_gid, weight in zip(primary_gids, weights):
+            gid = int(primary_gid)
+            terms[gid] = terms.get(gid, 0.0) - float(weight)
+        nodes: list[int] = []
+        coeffs: list[float] = []
+        for gid, coeff in terms.items():
+            if abs(coeff) <= tol:
+                continue
+            nodes.append(gid)
+            coeffs.append(coeff)
+        return nodes, coeffs
 
 
 @dataclass
@@ -258,12 +713,21 @@ class CompiledStaticStep(CompiledStep):
     ) -> NDArray:
         ddofs = self.ddofs
         ndof = len(u0)
-        fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
-        nf = len(fdofs)
+        dof_manager = args[0] if len(args) > 0 and hasattr(args[0], "step_transform") else None
+        use_mpc_reduction = (
+            dof_manager is not None
+            and getattr(dof_manager, "has_mpc_transform", False)
+            and dof_manager.can_apply_mpc_reduction(ddofs)
+        )
         neq = len(self.equations) if self.equations else 0
 
-        x0 = u0[fdofs]
-        if neq > 0:
+        if use_mpc_reduction:
+            x0 = dof_manager.reduced_initial_values(u0, ddofs)
+        else:
+            fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
+            x0 = u0[fdofs]
+        nf = len(x0)
+        if neq > 0 and not use_mpc_reduction:
             x0 = np.hstack([x0, np.zeros(neq)])
 
         increment = 1
@@ -284,6 +748,7 @@ class CompiledStaticStep(CompiledStep):
             dsloads=self.dsloads,
             rloads=self.rloads,
             equations=self.equations,
+            dof_manager=dof_manager,
         )
         solver = NonlinearNewtonSolver()
         state = solver(
@@ -293,9 +758,12 @@ class CompiledStaticStep(CompiledStep):
             rtol=self.solver_options.get("rtol"),
             maxiter=self.solver_options.get("maxiter"),
         )
-        u = u0.copy()
-        u[fdofs] = state.x[:nf]
-        u[ddofs] = self.dvals[1, :]
+        if use_mpc_reduction:
+            u = dof_manager.expand_step_solution(state.x[:nf], ddofs, self.dvals[1, :])
+        else:
+            u = u0.copy()
+            u[fdofs] = state.x[:nf]
+            u[ddofs] = self.dvals[1, :]
 
         R = kernel.resid
         K = kernel.stiff
@@ -321,3 +789,9 @@ class CompiledStaticStep(CompiledStep):
 def normalize(a: Sequence[float]) -> NDArray:
     v = np.asarray(a)
     return v / np.linalg.norm(v)
+
+
+def _as_list(value: int | Sequence[int]) -> list[int]:
+    if isinstance(value, int):
+        return [int(value)]
+    return [int(item) for item in value]
