@@ -165,7 +165,7 @@ class DynamicStep(Step):
             elif isinstance(elements, int):
                 lids = [model.elem_map.local(elements)]
             else:
-                lids = [model.node_map.local(gid) for gid in elements]
+                lids = [model.elem_map.local(gid) for gid in elements]
             if ltype == "gravity":
                 pass
             elif ltype == "dload":
@@ -217,7 +217,7 @@ class DynamicStep(Step):
                 raise ValueError(f"side set {sideset} not defined")
             for ele_no, edge_no in model.sidesets[sideset]:
                 block_no = model.block_elem_map[ele_no]
-                block = model.mesh.blocks[block_no]
+                block = model.blocks[block_no]
                 gid = block.elem_map[ele_no]
                 lid = block.elem_map.local(gid)
                 rload = RobinLoad(edge=edge_no, H=H, u0=u0)
@@ -313,6 +313,7 @@ class CompiledDynamicStep(CompiledStep):
         f = np.dot(K[:ndof, :ndof], u[:ndof])
         return u[:ndof]
     """
+
     def solve(
         self,
         fun: Callable[..., tuple[NDArray, NDArray]],
@@ -325,13 +326,12 @@ class CompiledDynamicStep(CompiledStep):
         fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
         nf, neq = len(fdofs), len(self.equations) if self.equations else 0
 
-        
         beta = self.solver_options.get("beta", 0.25)
         gamma = self.solver_options.get("gamma", 0.5)
         nsteps = self.solver_options.get("nsteps", 10)
         dt = self.period / nsteps
         alpha_damp = self.solver_options.get("alpha_damping", 0.0)
-        beta_damp  = self.solver_options.get("beta_damping", 0.0)
+        beta_damp = self.solver_options.get("beta_damping", 0.0)
 
         u, v, a = u0.copy(), np.zeros_like(u0), np.zeros_like(u0)
         solver = NonlinearNewtonSolver()
@@ -339,52 +339,58 @@ class CompiledDynamicStep(CompiledStep):
 
         for increment in range(1, nsteps + 1):
             t_new = time + dt
-          
-            u_pred = u + dt*v + (0.5 - beta)*dt**2*a
-            v_pred = v + (1 - gamma)*dt*a
 
-            
+            u_pred = u + dt * v + (0.5 - beta) * dt**2 * a
+            v_pred = v + (1 - gamma) * dt * a
+
             u_guess = u_pred.copy()
             x0 = u_guess[fdofs]
-            if neq > 0: x0 = np.hstack([x0, np.zeros(neq)])
+            if neq > 0:
+                x0 = np.hstack([x0, np.zeros(neq)])
 
             kernel = AssemblyKernel(
-                fun, u_guess, args=args,
-                step=self.number, increment=increment,
-                time=(time, t_new), dt=dt,
+                fun,
+                u_guess,
+                args=args,
+                step=self.number,
+                increment=increment,
+                time=(time, t_new),
+                dt=dt,
                 ddofs=ddofs,
-                dvals=self.dvals[min(increment, self.dvals.shape[0]-1), :],
-                nbcs=self.nbcs, dloads=self.dloads,
-                dsloads=self.dsloads, rloads=self.rloads,
-                equations=self.equations,)
+                dvals=self.dvals[min(increment, self.dvals.shape[0] - 1), :],
+                nbcs=self.nbcs,
+                dloads=self.dloads,
+                dsloads=self.dsloads,
+                rloads=self.rloads,
+                equations=self.equations,
+            )
 
-            
             M = assemble_mass(*args, u_guess) if assemble_mass else None
-            C = alpha_damp*M + beta_damp*kernel.stiff if M is not None else None
+            C = alpha_damp * M + beta_damp * kernel.stiff if M is not None else None
 
             if M is not None:
-                a_eff = (u_guess - u_pred)/(beta*dt**2)
+                a_eff = (u_guess - u_pred) / (beta * dt**2)
                 kernel.resid += M @ a_eff
-                kernel.stiff += M/(beta*dt**2)
+                kernel.stiff += M / (beta * dt**2)
             if C is not None:
                 kernel.resid += C @ v_pred
-                kernel.stiff += C * (gamma/(beta*dt))
+                kernel.stiff += C * (gamma / (beta * dt))
 
-            
-            state = solver(kernel, x0,
-                        atol=self.solver_options.get("atol"),
-                        rtol=self.solver_options.get("rtol"),
-                        maxiter=self.solver_options.get("maxiter"))
+            state = solver(
+                kernel,
+                x0,
+                atol=self.solver_options.get("atol"),
+                rtol=self.solver_options.get("rtol"),
+                maxiter=self.solver_options.get("maxiter"),
+            )
             u_guess[fdofs] = state.x[:nf]
             u_guess[ddofs] = kernel.dvals
 
-           
-            a = (u_guess - u_pred)/(beta*dt**2)
-            v = v_pred + gamma*dt*a
+            a = (u_guess - u_pred) / (beta * dt**2)
+            v = v_pred + gamma * dt * a
             u = u_guess
             time = t_new
 
-       
         R, K = kernel.resid, kernel.stiff
         react = np.zeros_like(R)
         react[ddofs] = R[ddofs]
@@ -395,9 +401,11 @@ class CompiledDynamicStep(CompiledStep):
             dofs=u[:ndof],
             react=react,
             lagrange_multipliers=state.x[nf:],
-            iterations=state.iterations,)
+            iterations=state.iterations,
+        )
 
         return u[:ndof]
+
 
 #        ndata[NodeVar.Fx] = f[0::2]
 #        ndata[NodeVar.Fy] = f[1::2]
