@@ -107,11 +107,12 @@ def mesh_plot(
         title   : plot title
         n_edge  : number of points per edge to draw curved edges
     """
-    fig: Figure | SubFigure
+    fig: Figure | SubFigure | None
     if ax is None:
         fig, ax = plt.subplots(figsize=(7, 5))
     else:
         fig = ax.figure
+    assert fig is not None
     seen: set[tuple[int, ...]] = set()
     linspace = np.linspace(-1.0, 1.0, n_edge)
     for elem in connect:
