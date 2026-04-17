@@ -350,7 +350,6 @@ class CPE4R(CPS4):
         return Khg, Rhg
 
     def hourglass_vectors(self, p: NDArray) -> list[NDArray]:
-
         # shape gradients at center
         xi = np.zeros(2)
         dNdx = self.shape_gradient(p, xi)  # (2, 4)

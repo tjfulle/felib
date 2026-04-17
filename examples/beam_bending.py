@@ -15,7 +15,6 @@ E = 2.0 * mu * (1.0 + nu)
 
 
 def beam_bending() -> None:
-
     q4 = beam_bending_quad4()
     q4i = beam_bending_quad4i()
     q8 = beam_bending_quad8()

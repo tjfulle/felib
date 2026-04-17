@@ -8,7 +8,6 @@ import felib
 
 
 def volume_locking_demo():
-
     class Everywhere(felib.collections.ElementSelector):
         def __call__(self, element: felib.collections.Element):
             return True
@@ -86,4 +85,5 @@ def analytic_solution(mesh: felib.mesh.Mesh, E: float, Nu: float, pres) -> NDArr
     return u
 
 
-volume_locking_demo()
+if __name__ == "__main__":
+    volume_locking_demo()
