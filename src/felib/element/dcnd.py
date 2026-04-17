@@ -12,7 +12,7 @@ from typing import Sequence
 import numpy as np
 from numpy.typing import NDArray
 
-from ..constants import T
+from ..dof_manager import DOF
 from ..material import Material
 from . import gauss
 from .isop import IsoparametricElement
@@ -97,7 +97,7 @@ class DCP3(Tri3, DiffusiveContinueElement, IsoparametricElement):
     @property
     def node_freedom_table(self) -> list[tuple[int, ...]]:
         """Node freedom table Temperature DOF at 4th entry."""
-        return [(T,), (T,), (T,)]
+        return [(DOF.T,), (DOF.T,), (DOF.T,)]
 
     def pmatrix(self, xi: NDArray) -> NDArray:
         """Interpolation matrix for temperature DOF."""
@@ -124,7 +124,7 @@ class DCP4(Quad4, DiffusiveContinueElement, IsoparametricElement):
     @property
     def node_freedom_table(self) -> list[tuple[int, ...]]:
         """Node freedom table.  Temperature DOF at 4th entry."""
-        return [(T,), (T,), (T,), (T,)]
+        return [(DOF.T,), (DOF.T,), (DOF.T,), (DOF.T,)]
 
     def pmatrix(self, xi: NDArray) -> NDArray:
         """Interpolation matrix for temperature DOF."""

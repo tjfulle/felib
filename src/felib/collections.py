@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from dataclasses import field
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import Callable
 from typing import Generator
-from typing import Literal
 from typing import Sequence
 from typing import Type
 
@@ -17,6 +17,8 @@ from .typing import DSLoadT
 from .typing import RLoadT
 
 if TYPE_CHECKING:
+    from .constants import NodeVariable
+    from .dof_manager import DOFManager
     from .element import ReferenceElement
 
 
@@ -43,29 +45,163 @@ class Map:
 
 class ElementBlockData:
     def __init__(self, block: str, nelem: int, ngauss: int, elem_var_names: list[str]) -> None:
-        self.block: str = block
-        self.data: NDArray = np.zeros((2, nelem, ngauss, len(elem_var_names)))
-        self.elem_var_names: tuple[str, ...] = tuple(elem_var_names)
+        self.block = block
+        shape = (2, nelem, ngauss, len(elem_var_names))
+        self.data: NDArray = np.zeros(shape, dtype=float)
+        self.var_names = list(elem_var_names)
 
     def advance_state(self) -> None:
-        self.data[0] = self.data[1]
+        self.data[0, :] = self.data[1, :]
 
     @property
     def scratch(self) -> NDArray:
         return self.data[1]
 
-    def setup_scratch(self) -> None:
+    def sync(self) -> None:
         self.data[1] = self.data[0]
 
-    def items(
-        self, projection: Literal["centroid"] = "centroid"
-    ) -> Generator[tuple[str, NDArray], None, None]:
+    def items(self, projection: str = "centroid") -> Generator[tuple[str, NDArray], None, None]:
         if projection == "centroid":
             centroid_data = self.data[0].mean(axis=1)
-            for i, name in enumerate(self.elem_var_names):
+            for i, name in enumerate(self.var_names):
                 yield name, centroid_data[:, i]
         else:
-            raise NotImplementedError
+            raise NotImplementedError(projection)
+
+
+class NodeData:
+    """
+    Container for all node-centered data in the simulation.
+
+    Attributes
+    ----------
+    data : np.ndarray
+        Node variable storage, shape (2, nnode, nvars)
+        [0] = converged, [1] = scratch space.
+    var_names : list[str]
+        Names of all variables (DOFs first, then extra node variables)
+    """
+
+    def __init__(
+        self, dof_manager: "DOFManager", node_vars: list["NodeVariable"] | None = None
+    ) -> None:
+        """
+        Parameters
+        ----------
+        dof_manager : DOFManager
+            Provides node_freedom_table, dof_map, and node_dof_cols.
+        node_vars : list[str], optional
+            Names of additional node variables not associated with DOFs.
+        """
+        self.nnode: int = dof_manager.nnode
+        self.dof_manager: "DOFManager" = dof_manager
+
+        # Build variable names: DOFs first, then extras
+        node_vars = node_vars or []
+        self.var_names = [dof_type.label for dof_type in dof_manager.node_dof_types]
+        for node_var in node_vars:
+            names = node_var.labels(dof_manager.ndim)
+            for name in names:
+                if name not in self.var_names:
+                    self.var_names.append(name)
+        self.nvars = len(self.var_names)
+
+        self.vectors: dict[str, list[int]] = {}
+        self.exodus_labels: list[str] = []
+        for i, name in enumerate(self.var_names):
+            base, sep, comp = name.partition(".")
+            if sep:
+                self.exodus_labels.append(f"displ{comp}" if base == "u" else f"{base}{comp}")
+                self.vectors.setdefault(base, []).append(i)
+            else:
+                self.exodus_labels.append(name)
+
+        # Allocate storage: [converged, scratch, nnode, nvars]
+        nnode = dof_manager.nnode
+        self.data = np.zeros((2, nnode, self.nvars), dtype=float)
+
+    def __getitem__(self, name: str) -> np.ndarray:
+        return self.gather(name)
+
+    def __setitem__(self, name: str, values: np.ndarray) -> None:
+        return self.scatter(name, values)
+
+    def gather_dofs(self) -> np.ndarray:
+        """
+        Gather all active DOFs into a flat vector suitable for assembly.
+
+        Returns
+        -------
+        dofs : np.ndarray
+            Global DOF vector of length dof_manager.ndof
+        """
+        ndof = self.dof_manager.ndof
+        dofs = np.zeros(ndof, dtype=float)
+
+        for n in range(self.nnode):
+            for local_idx, gdof in enumerate(self.dof_manager.dof_map[n]):
+                if gdof >= 0:
+                    dof_type = self.dof_manager.node_freedom_type(local_idx)
+                    col = self.dof_manager.node_dof_cols[dof_type]
+                    dofs[gdof] = self.data[0, n, col]
+
+        return dofs
+
+    def scatter_dofs(self, dofs: np.ndarray) -> None:
+        """
+        Scatter global DOF vector back into NodeData.
+
+        Parameters
+        ----------
+        dofs : np.ndarray
+            Global DOF vector (length = dof_manager.ndof)
+        """
+        for n in range(self.nnode):
+            for local_idx, gdof in enumerate(self.dof_manager.dof_map[n]):
+                if gdof >= 0:
+                    dof_type = self.dof_manager.node_freedom_type(local_idx)
+                    col = self.dof_manager.node_dof_cols[dof_type]
+                    self.data[1, n, col] = dofs[gdof]
+
+    def gather(self, name: str) -> np.ndarray:
+        """
+        Gather a scalar node variable (DOF or extra) across all nodes.
+
+        Returns a vector of length nnode.
+        """
+        d = self.data[0]
+        if name in self.vectors:
+            return d[:, self.vectors[name]]
+        else:
+            col = self.var_names.index(name)
+            return d[:, col]
+
+    def scatter(self, name: str, values: np.ndarray) -> None:
+        """
+        Scatter a scalar node variable back into NodeData.
+        """
+        d = self.data[1]
+        if name in self.vectors:
+            d[:, self.vectors[name]] = values
+        else:
+            col = self.var_names.index(name)
+            self.data[1, :, col] = values
+
+    @property
+    def scratch(self) -> NDArray:
+        return self.data[1]
+
+    def advance_state(self) -> None:
+        self.data[0, :] = self.data[1, :]
+
+    def sync(self) -> None:
+        self.data[1] = self.data[0]
+
+    def items(self, exodus_labels: bool = False) -> Generator[tuple[str, NDArray], None, None]:
+        for i, name in enumerate(self.var_names):
+            if exodus_labels:
+                name = self.exodus_labels[i]
+            yield name, self.data[0, :, i]
 
 
 class Field(ABC):
@@ -322,9 +458,7 @@ class Solution:
     lagrange_multipliers: NDArray = field(default_factory=lambda: np.empty((0,)))
 
 
-class RegionSelector(ABC):
-    @abstractmethod
-    def __call__(self, x: Sequence[float], on_boundary: bool) -> bool: ...
+class RegionSelector(ABC): ...
 
 
 @dataclass
@@ -337,6 +471,14 @@ class Node:
 
 
 @dataclass
+class Element:
+    lid: int
+    gid: int
+    x: Sequence[float]  # element centroid
+    block: str | None = None
+
+
+@dataclass
 class Edge:
     element: int
     edge: int
@@ -345,29 +487,58 @@ class Edge:
 
 
 @dataclass
+class Side:
+    element: Element
+    side: int  # global side number -> lid + 1
+    x: Sequence[float]
+    normal: list[float]
+    on_boundary: bool
+
+
+class NodeSelector(RegionSelector):
+    @abstractmethod
+    def __call__(self, node: Node) -> bool: ...
+
+
+class NodeXSelector(NodeSelector):
+    def __init__(self, nodes: list[int]) -> None:
+        self.nodes = nodes
+
+    def __call__(self, node: Node) -> bool:
+        return node.gid in self.nodes
+
+
+class ElementSelector(RegionSelector):
+    @abstractmethod
+    def __call__(self, element: Element) -> bool: ...
+
+
+class ElementXSelector(ElementSelector):
+    def __init__(self, elements: list[int]) -> None:
+        self.elements = elements
+
+    def __call__(self, element: Element) -> bool:
+        return element.gid in self.elements
+
+
+class SideSelector(RegionSelector):
+    @abstractmethod
+    def __call__(self, node: Side) -> bool: ...
+
+
+class SideXSelector(SideSelector):
+    def __init__(self, sides: list[Sequence[int]]) -> None:
+        self.sides: list[tuple[int, ...]] = [tuple(side[:2]) for side in sides]
+
+    def __call__(self, side: Side) -> bool:
+        return (side.element.gid, side.side) in self.sides
+
+
+@dataclass
 class BlockSpec:
     name: str
     cell_type: Type["ReferenceElement"]
-    region: RegionSelector | None
-    elements: Sequence[int] | None
-
-
-@dataclass
-class NodeSetSpec:
-    name: str
-    region: RegionSelector
-
-
-@dataclass
-class SideSetSpec:
-    name: str
-    region: RegionSelector
-
-
-@dataclass
-class ElemSetSpec:
-    name: str
-    region: RegionSelector
+    region: Callable[[Element], bool] | ElementSelector
 
 
 @dataclass

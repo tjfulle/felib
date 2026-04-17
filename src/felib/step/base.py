@@ -10,23 +10,32 @@ from typing import Callable
 import numpy as np
 from numpy.typing import NDArray
 
+from ..collections import NodeData
 from ..collections import Solution
+from ..constants import NodeVariable
 from ..typing import DLoadT
 from ..typing import DSLoadT
 from ..typing import RLoadT
 
 if TYPE_CHECKING:
+    from ..dof_manager import DOFManager
     from ..model import Model
 
 
 class Step(ABC):
-    def __init__(self, name: str, period: float = 1.0) -> None:
+    def __init__(self, name: str, ndim: int, period: float = 1.0) -> None:
         self.name = name
+        self.ndim = ndim
         self.period = period
         self.metadata: dict[str, dict] = defaultdict(dict)
 
     @abstractmethod
-    def compile(self, model: "Model", parent: "CompiledStep | None") -> "CompiledStep": ...
+    def node_variables(self) -> list[NodeVariable]: ...
+
+    @abstractmethod
+    def compile(
+        self, model: "Model", dof_manager: "DOFManager", parent: "CompiledStep | None"
+    ) -> "CompiledStep": ...
 
 
 @dataclass
@@ -40,6 +49,7 @@ class CompiledStep(ABC):
     dsloads: DSLoadT = field(default_factory=dict)
     rloads: RLoadT = field(default_factory=dict)
     equations: list[list[int | float]] = field(default_factory=list)
+    node_variables: list[str] = field(default_factory=list)
     start: float = field(init=False, default=0.0)
     number: int = field(init=False, repr=False)
     fdofs: NDArray = field(init=False, repr=False)
@@ -79,8 +89,12 @@ class CompiledStep(ABC):
 
     @abstractmethod
     def solve(
-        self, fun: Callable[..., tuple[NDArray, NDArray]], u0: NDArray, args: tuple[Any, ...] = ()
-    ) -> tuple[NDArray, NDArray]: ...
+        self,
+        fun: Callable[..., tuple[NDArray, NDArray]],
+        u0: NDArray,
+        ndata: NodeData,
+        args: tuple[Any, ...] = (),
+    ) -> NDArray: ...
 
     @property
     def solution(self) -> Solution:

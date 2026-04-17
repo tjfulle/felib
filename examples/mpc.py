@@ -1,5 +1,4 @@
 import sys
-from typing import Sequence
 
 import numpy as np
 
@@ -10,8 +9,8 @@ Y = felib.Y
 
 
 def mpc():
-    class Everywhere(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
+    class Everywhere(felib.collections.ElementSelector):
+        def __call__(self, element: felib.collections.Element) -> bool:
             return True
 
     nodes = [[1, 0.0, 0.0], [2, 1.0, 0.0], [3, 1.0, 1.0], [4, 0.0, 1.0], [5, 0.5, 0.5]]
@@ -32,7 +31,7 @@ def mpc():
 
     simulation.run()
 
-    u = simulation.dofs[1].reshape(model.nnode, -1)
+    u = simulation.ndata["u"]
     U = np.linalg.norm(u, axis=1)
     print(np.amax(U))
 

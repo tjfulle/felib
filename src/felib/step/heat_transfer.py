@@ -13,7 +13,9 @@ from ..collections import GravityLoad
 from ..collections import HeatFlux
 from ..collections import HeatSource
 from ..collections import RobinLoad
-from ..constants import T
+from ..constants import NodeVariable
+from ..constants import ScalarVar
+from ..dof_manager import DOF
 from ..typing import DLoadT
 from ..typing import DSLoadT
 from ..typing import RLoadT
@@ -22,15 +24,19 @@ from .base import Step
 from .static import CompiledStaticStep
 
 if TYPE_CHECKING:
+    from ..dof_manager import DOFManager
     from ..model import Model
 
 
 class HeatTransferStep(Step):
-    def __init__(self, name: str, period: float = 1.0) -> None:
-        super().__init__(name=name, period=period)
+    def __init__(self, name: str, ndim: int, period: float = 1.0) -> None:
+        super().__init__(name=name, ndim=ndim, period=period)
+
+    def node_variables(self) -> list[NodeVariable]:
+        return [ScalarVar("T")]
 
     def temperature(self, *, nodes: str | int | list[int], value: float = 0.0) -> None:
-        dofs = [T]
+        dofs = [DOF.T]
         dbcs = self.metadata["dbcs"]
         dbcs[f"dbc-{len(dbcs)}"] = (nodes, dofs, value)
 
@@ -64,20 +70,22 @@ class HeatTransferStep(Step):
             coeffs.append(float(triples[i + 2]))
         constraints[f"constraint-{len(constraints)}"] = (nodes, dofs, coeffs, rhs)
 
-    def compile(self, model: "Model", parent: CompiledStep | None) -> CompiledStep:
+    def compile(
+        self, model: "Model", dof_manager: "DOFManager", parent: CompiledStep | None
+    ) -> CompiledStep:
         return CompiledHeatTransferStep(
             name=self.name,
             parent=parent,
             period=self.period,
-            dbcs=self.compile_dbcs(model),
-            nbcs=self.compile_nbcs(model),
+            dbcs=self.compile_dbcs(model, dof_manager),
+            nbcs=self.compile_nbcs(model, dof_manager),
             dloads=self.compile_dloads(model),
             dsloads=self.compile_dsloads(model),
             rloads=self.compile_rloads(model),
-            equations=self.compile_constraints(model),
+            equations=self.compile_constraints(model, dof_manager),
         )
 
-    def compile_dbcs(self, model: "Model") -> list[tuple[int, float]]:
+    def compile_dbcs(self, model: "Model", dof_manager: "DOFManager") -> list[tuple[int, float]]:
         seen: dict[int, float] = {}
         for nodes, dofs, value in self.metadata.get("dbcs", {}).values():
             lids: list[int]
@@ -91,13 +99,13 @@ class HeatTransferStep(Step):
                 lids = [model.node_map.local(gid) for gid in nodes]
             for lid in lids:
                 for dof in dofs:
-                    i = model.node_freedom_cols[dof]
-                    DOF = model.dof_map[lid, i]
+                    i = dof_manager.dof_index(dof)
+                    DOF = dof_manager.global_dof(lid, i)
                     seen[DOF] = value
         dbcs = [(k, seen[k]) for k in sorted(seen)]
         return dbcs
 
-    def compile_nbcs(self, model: "Model") -> list[tuple[int, float]]:
+    def compile_nbcs(self, model: "Model", dof_manager: "DOFManager") -> list[tuple[int, float]]:
         seen: dict[int, float] = defaultdict(float)
         for nodeset, dofs, value in self.metadata.get("nbcs", {}).values():
             if nodeset not in model.nodesets:
@@ -105,7 +113,7 @@ class HeatTransferStep(Step):
             lids: list[int] = model.nodesets[nodeset]
             for lid in lids:
                 for dof in dofs:
-                    DOF = model.dof_map[lid, dof]
+                    DOF = dof_manager.global_dof(lid, dof)
                     seen[DOF] += value
         nbcs = [(k, seen[k]) for k in sorted(seen)]
         return nbcs
@@ -174,7 +182,9 @@ class HeatTransferStep(Step):
                 rloads[block_no][lid].append(rload)
         return rloads
 
-    def compile_constraints(self, model: "Model") -> list[list[int | float]]:
+    def compile_constraints(
+        self, model: "Model", dof_manager: "DOFManager"
+    ) -> list[list[int | float]]:
         nodes: list[int]
         dofs: list[int]
         coeffs: list[float]
@@ -186,7 +196,7 @@ class HeatTransferStep(Step):
                 if gid not in model.node_map:
                     raise ValueError(f"Node {gid} is not defined")
                 lid = model.node_map.local(gid)
-                DOF = model.dof_map[lid, dof]
+                DOF = dof_manager.global_dof(lid, dof)
                 mpc.extend([DOF, coeff])
             mpc.append(rhs)
             mpcs.append(mpc)

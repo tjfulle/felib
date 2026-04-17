@@ -1,6 +1,5 @@
 import argparse
 import sys
-from typing import Sequence
 
 import numpy as np
 
@@ -11,21 +10,17 @@ Y = felib.Y
 
 
 def exercise(esize: float = 0.05):
-    class Everywhere(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
+    class Everywhere(felib.collections.ElementSelector):
+        def __call__(self, element: felib.collections.Element) -> bool:
             return True
 
-    class Top(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
-            if on_boundary and x[1] > 0.999:
-                return True
-            return False
+    class Top(felib.collections.NodeSelector):
+        def __call__(self, node: felib.collections.Node) -> bool:
+            return node.on_boundary and node.x[1] > 0.999
 
-    class Bottom(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
-            if on_boundary and x[1] < -0.999:
-                return True
-            return False
+    class Bottom(felib.collections.SideSelector):
+        def __call__(self, side: felib.collections.Side):
+            return side.x[1] < -0.999
 
     nodes, elements = felib.meshing.plate_with_hole(esize=esize)
     mesh = felib.mesh.Mesh(nodes=nodes, elements=elements)
@@ -46,7 +41,7 @@ def exercise(esize: float = 0.05):
 
     simulation.run()
 
-    u = simulation.dofs[1].reshape(model.nnode, -1)
+    u = simulation.ndata["u"]
     U = np.linalg.norm(u, axis=1)
     print(np.amax(U))
 

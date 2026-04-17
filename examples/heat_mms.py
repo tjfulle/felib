@@ -8,8 +8,8 @@ import felib
 
 
 def mms(esize: float = 0.05):
-    class Everywhere(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
+    class Everywhere(felib.collections.ElementSelector):
+        def __call__(self, el: felib.collections.Element):
             return True
 
     class HeatSource(felib.collections.ScalarField):
@@ -40,7 +40,7 @@ def mms(esize: float = 0.05):
 
     simulation.run()
 
-    u = simulation.dofs[1]
+    u = simulation.ndata["T"]
     analytic = T(model.coords[:, 0], model.coords[:, 1])
     assert np.amax(np.abs(u - analytic)) < 0.03
     felib.plotting.tplot(model.coords, model.connect, u)

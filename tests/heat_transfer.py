@@ -8,8 +8,8 @@ import felib.pytools as py
 
 
 def test_mms(tmp_path: Path):
-    class Everywhere(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
+    class Everywhere(felib.collections.ElementSelector):
+        def __call__(self, element: felib.collections.Element):
             return True
 
     class HeatSource(felib.collections.ScalarField):
@@ -44,7 +44,8 @@ def test_mms(tmp_path: Path):
 
         # Choose elements on the interior to neglect edge effects
         ix = np.where((np.abs(model.coords[:, 0]) < 0.8) & (np.abs(model.coords[:, 1]) < 0.8))[0]
-        u = simulation.dofs[1][ix]
+        dofs = simulation.ndata.gather_dofs()
+        u = dofs[ix]
         analytic = T(model.coords[ix, 0], model.coords[ix, 1])
         assert np.amax(np.abs(u - analytic)) < 1.5e-3
 
@@ -62,21 +63,17 @@ def test_heat1(tmp_path: Path):
 
     """
 
-    class Everywhere(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
+    class Everywhere(felib.collections.ElementSelector):
+        def __call__(self, element: felib.collections.Element):
             return True
 
-    class Top(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
-            if on_boundary and x[1] > 0.999:
-                return True
-            return False
+    class Top(felib.collections.SideSelector):
+        def __call__(self, side: felib.collections.Side) -> bool:
+            return side.x[1] > 0.999
 
-    class Bottom(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
-            if on_boundary and x[1] < -0.999:
-                return True
-            return False
+    class Bottom(felib.collections.SideSelector):
+        def __call__(self, side: felib.collections.Side) -> bool:
+            return side.x[1] < -0.999
 
     tmp_path.mkdir(parents=True, exist_ok=True)
     with py.working_dir(tmp_path):
@@ -96,7 +93,7 @@ def test_heat1(tmp_path: Path):
         step.film(sideset="Top", h=250.0, ambient_temp=25.0)
         step.dflux(sideset="Bottom", magnitude=2000.0, direction=[0.0, 1.0])
         simulation.run()
-        u = simulation.dofs[1]
+        u = simulation.ndata.gather_dofs()
         thi = u[np.where(np.abs(mesh.coords[:, 1] - 1.0) < 1e-6)[0]]
         assert np.allclose(thi, 33)
         tlo = u[np.where(np.abs(mesh.coords[:, 1] + 1.0) < 1e-6)[0]]

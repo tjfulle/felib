@@ -125,7 +125,7 @@ class ElementBlock:
         dsloads: dict[int, list[tuple[int, DistributedSurfaceLoad]]] | None = None,
         rloads: dict[int, list[RobinLoad]] | None = None,
     ) -> tuple[NDArray, NDArray]:
-        data.setup_scratch()
+        data.sync()
         K = np.zeros((self.ndof, self.ndof), dtype=float)
         R = np.zeros(self.ndof, dtype=float)
         dloads = dloads or {}

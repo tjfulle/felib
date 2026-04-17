@@ -1,18 +1,24 @@
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import Sequence
 
 import exodusii
 import numpy as np
 from numpy.typing import NDArray
 
-from . import constants
 from .block import ElementBlock
 from .collections import ElementBlockData
+from .collections import NodeData
+from .constants import NodeVariable
+from .dof_manager import DOFManager
 from .step import CompiledStep
 from .step import DirectStep
 from .step import HeatTransferStep
 from .step import StaticStep
 from .step import Step
+from .typing import DLoadT
+from .typing import DSLoadT
+from .typing import RLoadT
 
 if TYPE_CHECKING:
     from .model import Model
@@ -22,17 +28,16 @@ class Simulation:
     def __init__(self, model: "Model") -> None:
         self.model: "Model" = model
         self.model.freeze()
+        self.dof_manager: DOFManager = DOFManager(model)
         self.steps: list[Step] = []
         self.csteps: list[CompiledStep] = []
 
-        # Solution and residual storage
-        self.dofs: NDArray = np.zeros((2, self.model.ndof))
-        self.flux: NDArray = np.zeros((2, self.model.ndof))
+        self.ndata: NodeData
         self.ebdata: list[ElementBlockData] = []
         b: ElementBlock
-        for b in model.blocks:
-            d = ElementBlockData(b.name, b.nelem, b.element.npts, b.element_variable_names())
-            self.ebdata.append(d)
+        for b in self.model.blocks:
+            ebd = ElementBlockData(b.name, b.nelem, b.element.npts, b.element_variable_names())
+            self.ebdata.append(ebd)
 
     def advance_state(self) -> None:
         """
@@ -41,8 +46,7 @@ class Simulation:
         Copies the contents of self.u[1] -> self.u[0]
         and self.R[1] -> self.R[0], preparing for next step.
         """
-        self.dofs[0, :] = self.dofs[1, :]
-        self.flux[0, :] = self.flux[1, :]
+        self.ndata.advance_state()
         for d in self.ebdata:
             d.advance_state()
 
@@ -50,21 +54,29 @@ class Simulation:
         self, name: str | None = None, period: float = 1.0, **options: Any
     ) -> StaticStep:
         name = name or f"step-{len(self.steps)}"
-        step = StaticStep(name=name, period=period, **options)
+        step = StaticStep(name=name, ndim=self.model.ndim, period=period, **options)
         self.steps.append(step)
         return step
 
     def direct_step(self, name: str | None = None, period: float = 1.0) -> DirectStep:
         name = name or f"step-{len(self.steps)}"
-        step = DirectStep(name=name, period=period)
+        step = DirectStep(name=name, ndim=self.model.ndim, period=period)
         self.steps.append(step)
         return step
 
     def heat_transfer_step(self, name: str | None = None, period: float = 1.0) -> HeatTransferStep:
         name = name or f"step-{len(self.steps)}"
-        step = HeatTransferStep(name=name, period=period)
+        step = HeatTransferStep(name=name, ndim=self.model.ndim, period=period)
         self.steps.append(step)
         return step
+
+    def allocate_node_storage(self) -> None:
+        node_vars: list[NodeVariable] = []
+        for step in self.steps:
+            for var in step.node_variables():
+                if var not in node_vars:
+                    node_vars.append(var)
+        self.ndata = NodeData(self.dof_manager, node_vars=node_vars)
 
     def run(self) -> None:
         """
@@ -73,15 +85,18 @@ class Simulation:
         For each step, triggers CompiledStep.solve(), advances state, and writes results to
         the Exodus output file.
         """
+        self.allocate_node_storage()
         file = ExodusFile(self)
         parent: CompiledStep | None = None
         for i, step in enumerate(self.steps):
-            cstep = step.compile(self.model, parent=parent)
-            self.dofs[1], self.flux[1] = cstep.solve(
-                self.model.assemble, self.dofs[0], args=(self.ebdata,)
+            cstep = step.compile(self.model, self.dof_manager, parent=parent)
+            u0 = self.ndata.gather_dofs()
+            u = cstep.solve(
+                assemble, u0, self.ndata, args=(self.dof_manager, self.model.blocks, self.ebdata)
             )
+            self.ndata.scatter_dofs(u)
             self.advance_state()
-            file.update(i + 1, cstep.start, cstep.period, self.ebdata, self.dofs[1], self.flux[1])
+            file.update(i + 1, cstep.start, cstep.period, self.ndata, self.ebdata)
             parent = cstep
             self.csteps.append(cstep)
 
@@ -115,8 +130,7 @@ class ExodusFile:
         )
 
         # Write coordinate and connectivity data
-        coord_names = [f"disp{'xyz'[i]}" for i in range(model.coords.shape[1])]
-        file.put_coord_names(coord_names)
+        file.put_coord_names(["xyz"[i] for i in range(model.coords.shape[1])])
         file.put_coords(model.coords)
         file.put_map(model.elem_map.lid_to_gid)
         file.put_node_id_map(model.node_map.lid_to_gid)
@@ -173,32 +187,11 @@ class ExodusFile:
         file.put_time(1, 0.0)
         file.put_global_variable_values(1, np.zeros(1, dtype=float))
 
-        self.umask = np.isin(model.dof_types, [constants.Ux, constants.Uy, constants.Uz])
-        self.tmask = model.dof_types == constants.T
+        file.put_node_variable_params(len(simulation.ndata.exodus_labels))
+        file.put_node_variable_names(simulation.ndata.exodus_labels)
 
-        node_variable_params: list[str] = []
-        ndim = model.coords.shape[1]
-        for dim in "xyz"[:ndim]:
-            node_variable_params.append(f"displ{dim}")
-        if np.any(self.umask):
-            for dim in "xyz"[:ndim]:
-                node_variable_params.append(f"F{dim}")
-        if np.any(self.tmask):
-            node_variable_params.append("T")
-            node_variable_params.append("HFL")
-        file.put_node_variable_params(len(node_variable_params))
-        file.put_node_variable_names(node_variable_params)
-
-        zero = np.zeros(model.coords.shape[0])
-        for dim in "xyz"[:ndim]:
-            file.put_node_variable_values(1, f"displ{dim}", zero)
-        if np.any(self.umask):
-            for dim in "xyz"[:ndim]:
-                file.put_node_variable_values(1, f"F{dim}", zero)
-
-        if np.any(self.tmask):
-            file.put_node_variable_values(1, "T", zero)
-            file.put_node_variable_values(1, "HFL", zero)
+        for name, value in simulation.ndata.items(exodus_labels=True):
+            file.put_node_variable_values(1, name, value)
 
         # Write initial element variable values
         for j, ebd in enumerate(simulation.ebdata):
@@ -213,9 +206,8 @@ class ExodusFile:
         step_no: int,
         start: float,
         period: float,
+        ndata: NodeData,
         ebdata: list[ElementBlockData],
-        dofs: NDArray,
-        flux: NDArray,
     ) -> None:
         """
         Write updated values for a new time step.
@@ -224,25 +216,9 @@ class ExodusFile:
             step_no: Index of current step.
         """
         file = self.file
-        model = self.model
-
         file.put_time(step_no + 1, start + period)
-
-        ndim = model.coords.shape[1]
-        u = dofs[self.umask]
-        if not u.size:
-            u = np.zeros(model.coords.size)
-        for i in range(ndim):
-            dim = "xyz"[i]
-            file.put_node_variable_values(step_no + 1, f"displ{dim}", u[i::ndim])
-        if np.any(self.umask):
-            R = flux[self.umask]
-            for i in range(ndim):
-                dim = "xyz"[i]
-                file.put_node_variable_values(step_no + 1, f"F{dim}", R[i::ndim])
-        if np.any(self.tmask):
-            file.put_node_variable_values(step_no + 1, "T", dofs[self.tmask])
-            file.put_node_variable_values(step_no + 1, "HFL", flux[self.tmask])
+        for name, value in ndata.items(exodus_labels=True):
+            file.put_node_variable_values(step_no + 1, name, value)
         for j, bd in enumerate(ebdata):
             for name, value in bd.items(projection="centroid"):
                 file.put_element_variable_values(step_no + 1, j + 1, name, value)
@@ -255,3 +231,55 @@ def str32(string: str) -> str:
     Pads or truncates to ensure 32-character width.
     """
     return f"{string:32}"
+
+
+def assemble(
+    step: int,
+    increment: int,
+    time: Sequence[float],
+    dt: float,
+    u: NDArray,
+    du: NDArray,
+    dloads: DLoadT,
+    dsloads: DSLoadT,
+    rloads: RLoadT,
+    dofs: DOFManager,
+    blocks: list[ElementBlock],
+    ebdata: list[ElementBlockData],
+) -> tuple[NDArray, NDArray]:
+    """
+    Global matrix and residual assembly.
+
+    Calls ElementBlock.assemble() for each block, inserting into global stiffness
+    matrix and force vector.
+
+    Args:
+        step: Current analysis step.
+        increment: Sub-increment index.
+        time: Current time history.
+        dt: Time step size.
+        u: Current displacement vector.
+        du: Displacement increment vector.
+
+    Returns:
+        Tuple of (K_global, R_global)
+    """
+    K = np.zeros((dofs.size, dofs.size), dtype=float)
+    R = np.zeros(dofs.size, dtype=float)
+    for b, block in enumerate(blocks):
+        bft = dofs.block_freedom_table(b)
+        kb, rb = block.assemble(
+            step,
+            increment,
+            time,
+            dt,
+            u[bft],
+            du[bft],
+            ebdata[b],
+            dloads=dloads.get(b),
+            dsloads=dsloads.get(b),
+            rloads=rloads.get(b),
+        )
+        K[np.ix_(bft, bft)] += kb
+        R[bft] += rb
+    return K, R

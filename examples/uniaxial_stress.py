@@ -1,6 +1,5 @@
 import argparse
 import sys
-from typing import Sequence
 
 import numpy as np
 
@@ -8,21 +7,19 @@ import felib
 
 
 def exercise(esize: float = 0.05):
-    class Everywhere(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
+    class Everywhere(felib.collections.ElementSelector):
+        def __call__(self, element: felib.collections.Element):
             return True
 
-    class Bottom(felib.collections.RegionSelector):
-        def __call__(self, x: Sequence[float], on_boundary: bool) -> bool:
-            if on_boundary and x[1] < -0.999:
-                return True
-            return False
+    class Bottom(felib.collections.SideSelector):
+        def __call__(self, side: felib.collections.Side):
+            return side.x[1] < -0.999
 
     nodes, elements = felib.meshing.plate_with_hole(esize=esize)
     mesh = felib.mesh.Mesh(nodes=nodes, elements=elements)
     mesh.block(name="Block-1", region=Everywhere(), cell_type=felib.element.Tri3)
-    mesh.nodeset("Point", region=lambda x, on_boundary: abs(x[0]) < 0.05 and x[1] > 0.999)
-    mesh.nodeset("Top", region=lambda x, on_boundary: x[1] > 0.99)
+    mesh.nodeset("Point", region=lambda node: abs(node.x[0]) < 0.05 and node.x[1] > 0.999)
+    mesh.nodeset("Top", region=lambda node: node.x[1] > 0.99)
     mesh.sideset("Bottom", region=Bottom())
 
     model = felib.model.Model(mesh, name="uniaxial_stress")
@@ -38,9 +35,7 @@ def exercise(esize: float = 0.05):
     step.traction(sideset="Bottom", magnitude=1e8, direction=[0, -1])
     simulation.run()
 
-    solution = simulation.csteps[-1].solution
-
-    u = solution.dofs.reshape((model.nnode, -1))
+    u = simulation.ndata["u"]
     U = np.linalg.norm(u, axis=1)
     print(np.amax(U))
 

@@ -6,6 +6,7 @@ from typing import Callable
 import numpy as np
 from numpy.typing import NDArray
 
+from ..collections import NodeData
 from ..collections import Solution
 from ..solver import DirectSolver
 from .assemble import AssemblyKernel
@@ -13,24 +14,27 @@ from .base import CompiledStep
 from .static import StaticStep
 
 if TYPE_CHECKING:
+    from ..dof_manager import DOFManager
     from ..model import Model
 
 
 class DirectStep(StaticStep):
-    def __init__(self, name: str, period: float = 1.0) -> None:
-        super().__init__(name, period=period)
+    def __init__(self, name: str, ndim: int, period: float = 1.0) -> None:
+        super().__init__(name, ndim=ndim, period=period)
 
-    def compile(self, model: "Model", parent: CompiledStep | None) -> CompiledStep:
+    def compile(
+        self, model: "Model", dof_manager: "DOFManager", parent: CompiledStep | None
+    ) -> CompiledStep:
         return CompiledDirectStep(
             name=self.name,
             parent=parent,
             period=self.period,
-            dbcs=self.compile_dbcs(model),
-            nbcs=self.compile_nbcs(model),
+            dbcs=self.compile_dbcs(model, dof_manager),
+            nbcs=self.compile_nbcs(model, dof_manager),
             dloads=self.compile_dloads(model),
             dsloads=self.compile_dsloads(model),
             rloads=self.compile_rloads(model),
-            equations=self.compile_constraints(model),
+            equations=self.compile_constraints(model, dof_manager),
         )
 
 
@@ -44,8 +48,12 @@ class CompiledDirectStep(CompiledStep):
     """
 
     def solve(
-        self, fun: Callable[..., tuple[NDArray, NDArray]], u0: NDArray, args: tuple[Any, ...] = ()
-    ) -> tuple[NDArray, NDArray]:
+        self,
+        fun: Callable[..., tuple[NDArray, NDArray]],
+        u0: NDArray,
+        ndata: NodeData,
+        args: tuple[Any, ...] = (),
+    ) -> NDArray:
         ddofs = self.ddofs
         ndof = len(u0)
         fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
@@ -99,4 +107,6 @@ class CompiledDirectStep(CompiledStep):
         )
 
         flux = np.dot(K[:ndof, :ndof], u[:ndof])
-        return u, flux
+        #        ndata[NodeVariable.Fx] = flux[0::2]
+        #        ndata[NodeVariable.Fy] = flux[1::2]
+        return u[:ndof]
