@@ -125,8 +125,6 @@ def mesh_plot(
             ax.plot(edge_pts[:, 0], edge_pts[:, 1], color=color, linewidth=lw, label=label, ls=ls)
             label = None
             seen.add(ix)
-    plt.tight_layout()
-    plt.show()
     return fig, ax
 
 

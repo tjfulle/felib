@@ -8,6 +8,7 @@ import felib
 X = felib.X
 Y = felib.Y
 
+
 def exercise(
     nx: int = 8,
     ny: int = 8,
@@ -64,8 +65,12 @@ def exercise(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--nx", type=int, default=8, help="Number of elements in x [default: %(default)s]")
-    parser.add_argument("--ny", type=int, default=8, help="Number of elements in y [default: %(default)s]")
+    parser.add_argument(
+        "--nx", type=int, default=8, help="Number of elements in x [default: %(default)s]"
+    )
+    parser.add_argument(
+        "--ny", type=int, default=8, help="Number of elements in y [default: %(default)s]"
+    )
     parser.add_argument(
         "--nu",
         type=float,

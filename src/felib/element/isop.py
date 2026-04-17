@@ -436,7 +436,7 @@ class IsoparametricElement(Element):
         dev_stresses: list[NDArray] = []
         pressure_shapes: list[NDArray] = []
         volumetric_strains: list[float] = []
-#Code lines 359-438 generated with CODEX from ChatGPT, adapted for ME7540
+        # Code lines 359-438 generated with CODEX from ChatGPT, adapted for ME7540
 
         for ipt, (w, xi) in enumerate(self.integration_points()):
             J = self.jacobian(p, xi)
