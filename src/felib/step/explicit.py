@@ -1,0 +1,489 @@
+from collections import defaultdict
+from dataclasses import dataclass
+from dataclasses import field
+from typing import TYPE_CHECKING
+from typing import Any
+from typing import Callable
+from typing import Sequence
+
+import numpy as np
+from numpy.typing import NDArray
+
+from ..collections import DistributedLoad
+from ..collections import DistributedSurfaceLoad
+from ..collections import Field
+from ..collections import GravityLoad
+from ..collections import NodeData
+from ..collections import PressureLoad
+from ..collections import RobinLoad
+from ..collections import Solution
+from ..collections import TractionLoad
+from ..constants import NodeVariable
+from ..constants import SpatialVectorVar
+from ..typing import DLoadT
+from ..typing import DSLoadT
+from ..typing import RLoadT
+from .assemble import AssemblyKernel
+from .base import CompiledStep
+from .base import Step
+
+if TYPE_CHECKING:
+    from ..dof_manager import DOFManager
+    from ..model import Model
+
+
+class ExplicitStep(Step):
+    def __init__(self, name: str, ndim: int, period: float = 1.0, **options: Any) -> None:
+        super().__init__(name=name, ndim=ndim, period=period)
+
+        dt = options.pop("dt", None)
+        self.dt = None if dt is None else float(dt)
+
+        if self.dt is not None and self.dt <= 0.0:
+            raise ValueError("Explicit step dt must be positive")
+
+        damping = options.pop("damping", 0.0)
+        self.damping = float(damping)
+
+        if self.damping < 0.0:
+            raise ValueError("Explicit step damping must be non-negative")
+
+        history_interval = options.pop("history_interval", 0)
+        self.history_interval = int(history_interval)
+
+        if self.history_interval < 0:
+            raise ValueError("Explicit step history_interval must be non-negative")
+
+        self.solver_opts = options
+
+    def boundary(
+        self, *, nodes: str | int | list[int], dofs: int | list[int], value: float = 0.0
+    ) -> None:
+        if isinstance(dofs, int):
+            dofs = [dofs]
+        dbcs = self.metadata["dbcs"]
+        dbcs[f"dbc-{len(dbcs)}"] = (nodes, dofs, value)
+
+    def point_load(
+        self, *, nodes: str | int | list[int], dofs: int | list[int], value: float = 0.0
+    ) -> None:
+        if isinstance(dofs, int):
+            dofs = [dofs]
+        nbcs = self.metadata["nbcs"]
+        nbcs[f"nbc-{len(nbcs)}"] = (nodes, dofs, value)
+
+    def traction(self, *, sideset: str, magnitude: float, direction: Sequence[float]) -> None:
+        dsloads = self.metadata["dsloads"]
+        dir = normalize(direction)
+        dsloads[f"dsload-{len(dsloads)}"] = ("traction", sideset, magnitude, dir)
+
+    def pressure(self, *, sideset: str, magnitude: float) -> None:
+        dsloads = self.metadata["dsloads"]
+        dsloads[f"dsload-{len(dsloads)}"] = ("pressure", sideset, magnitude)
+
+    def gravity(
+        self, *, elements: str | int | list[int], g: float, direction: Sequence[float]
+    ) -> None:
+        dloads = self.metadata["dloads"]
+        dir = normalize(direction)
+        dloads[f"dload-{len(dloads)}"] = ("gravity", elements, g, dir)
+
+    def dload(self, *, elements: str | int | list[int], field: Field) -> None:
+        dloads = self.metadata["dloads"]
+        dloads[f"dload-{len(dloads)}"] = ("dload", elements, field)
+
+    def robin(self, *, sideset: str, u0: NDArray, H: NDArray) -> None:
+        rloads = self.metadata["rloads"]
+        rloads[f"rload-{len(rloads)}"] = (sideset, H, u0)
+
+    def equation(self, *args: int | float) -> None:
+        if len(args) < 4:
+            raise ValueError("Equation at least one (node, dof, coeff) triple and rhs")
+        if (len(args) - 1) % 3 != 0:
+            raise ValueError("Equation must be (node, dof, coeff), ..., rhs")
+        constraints = self.metadata["constraints"]
+        triples = args[:-1]
+        rhs = args[-1]
+        nodes: list[int] = []
+        dofs: list[int] = []
+        coeffs: list[float] = []
+        for i in range(0, len(triples), 3):
+            nodes.append(int(triples[i]))
+            dofs.append(int(triples[i + 1]))
+            coeffs.append(float(triples[i + 2]))
+        constraints[f"constraint-{len(constraints)}"] = (nodes, dofs, coeffs, rhs)
+
+    def compile(
+        self, model: "Model", dof_manager: "DOFManager", parent: CompiledStep | None
+    ) -> CompiledStep:
+        return CompiledExplicitStep(
+            name=self.name,
+            parent=parent,
+            period=self.period,
+            dt=self.dt,
+            damping=self.damping,
+            history_interval=self.history_interval,
+            dbcs=self.compile_dbcs(model, dof_manager),
+            nbcs=self.compile_nbcs(model, dof_manager),
+            dloads=self.compile_dloads(model),
+            dsloads=self.compile_dsloads(model),
+            rloads=self.compile_rloads(model),
+            equations=self.compile_constraints(model, dof_manager),
+            solver_options=self.solver_opts,
+        )
+
+    def node_variables(self) -> list[NodeVariable]:
+        variables: list[NodeVariable] = [
+            SpatialVectorVar("u"),
+            SpatialVectorVar("v"),
+            SpatialVectorVar("a"),
+            SpatialVectorVar("f"),
+        ]
+        return variables
+
+    def compile_dbcs(self, model: "Model", dof_manager: "DOFManager") -> list[tuple[int, float]]:
+        seen: dict[int, float] = {}
+        for nodes, dofs, value in self.metadata.get("dbcs", {}).values():
+            lids: list[int]
+            if isinstance(nodes, str):
+                if nodes not in model.nodesets:
+                    raise ValueError(f"nodeset {nodes} not defined")
+                lids = model.nodesets[nodes]
+            elif isinstance(nodes, int):
+                lids = [model.node_map.local(nodes)]
+            else:
+                lids = [model.node_map.local(gid) for gid in nodes]
+            for lid in lids:
+                for dof in dofs:
+                    DOF = dof_manager.global_dof(lid, dof)
+                    seen[DOF] = value
+        dbcs = [(k, seen[k]) for k in sorted(seen)]
+        return dbcs
+
+    def compile_nbcs(self, model: "Model", dof_manager: "DOFManager") -> list[tuple[int, float]]:
+        seen: dict[int, float] = defaultdict(float)
+        for nodes, dofs, value in self.metadata.get("nbcs", {}).values():
+            lids: list[int]
+            if isinstance(nodes, str):
+                if nodes not in model.nodesets:
+                    raise ValueError(f"nodeset {nodes} not defined")
+                lids = model.nodesets[nodes]
+            elif isinstance(nodes, int):
+                lids = [model.node_map.local(nodes)]
+            else:
+                lids = [model.node_map.local(gid) for gid in nodes]
+            for lid in lids:
+                for dof in dofs:
+                    DOF = dof_manager.global_dof(lid, dof)
+                    seen[DOF] += value
+        nbcs = [(k, seen[k]) for k in sorted(seen)]
+        return nbcs
+
+    def compile_dloads(self, model: "Model") -> DLoadT:
+        dloads: DLoadT = defaultdict(lambda: defaultdict(list))
+        for ltype, elements, *args in self.metadata.get("dloads", {}).values():
+            dload: DistributedLoad | None = None
+            lids: list[int]
+            if isinstance(elements, str):
+                if elements not in model.elemsets:
+                    raise ValueError(f"element set {elements} not defined")
+                lids = model.elemsets[elements]
+            elif isinstance(elements, int):
+                lids = [model.elem_map.local(elements)]
+            else:
+                lids = [model.elem_map.local(gid) for gid in elements]
+            if ltype == "gravity":
+                pass
+            elif ltype == "dload":
+                field = args[0]
+                dload = DistributedLoad(field=field)
+            else:
+                raise ValueError(f"Unknown ltype: {ltype}")
+            for lid in lids:
+                gid = model.elem_map[lid]
+                block_no = model.block_elem_map[lid]
+                block = model.blocks[block_no]
+                if ltype == "gravity":
+                    g, direction = args
+                    dload = GravityLoad(block.material.density * g, direction)
+                e = block.elem_map.local(gid)
+                assert dload is not None
+                dloads[block_no][e].append(dload)
+        return dloads
+
+    def compile_dsloads(self, model: "Model") -> DSLoadT:
+        dsloads: DSLoadT = defaultdict(lambda: defaultdict(list))
+        for ltype, sideset, *args in self.metadata.get("dsloads", {}).values():
+            dsload: DistributedSurfaceLoad
+            if sideset not in model.sidesets:
+                raise ValueError(f"side set {sideset} not defined")
+            if ltype == "traction":
+                magnitude, direction = args
+                dsload = TractionLoad(magnitude=magnitude, direction=direction)
+            elif ltype == "pressure":
+                magnitude = args[0]
+                dsload = PressureLoad(magnitude=magnitude)
+            else:
+                raise ValueError(f"Unknown ltype: {ltype}")
+            for elem_no, edge_no in model.sidesets[sideset]:
+                block_no = model.block_elem_map[elem_no]
+                block = model.blocks[block_no]
+                gid = model.elem_map[elem_no]
+                lid = block.elem_map.local(gid)
+                dsloads[block_no][lid].append((edge_no, dsload))
+        return dsloads
+
+    def compile_rloads(self, model: "Model") -> RLoadT:
+        sideset: str
+        H: NDArray
+        u0: NDArray
+        rloads: RLoadT = defaultdict(lambda: defaultdict(list))
+        for sideset, H, u0 in self.metadata.get("rloads", {}).values():
+            if sideset not in model.sidesets:
+                raise ValueError(f"side set {sideset} not defined")
+            for ele_no, edge_no in model.sidesets[sideset]:
+                block_no = model.block_elem_map[ele_no]
+                block = model.blocks[block_no]
+                gid = model.elem_map[ele_no]
+                lid = block.elem_map.local(gid)
+                rload = RobinLoad(edge=edge_no, H=H, u0=u0)
+                rloads[block_no][lid].append(rload)
+        return rloads
+
+    def compile_constraints(
+        self, model: "Model", dof_manager: "DOFManager"
+    ) -> list[list[int | float]]:
+        nodes: list[int]
+        dofs: list[int]
+        coeffs: list[float]
+        rhs: float = 0.0
+        mpcs: list[list[int | float]] = []
+        for nodes, dofs, coeffs, rhs in self.metadata.get("constraints", {}).values():
+            mpc: list[int | float] = []
+            for gid, dof, coeff in zip(nodes, dofs, coeffs):
+                if gid not in model.node_map:
+                    raise ValueError(f"Node {gid} is not defined")
+                lid = model.node_map.local(gid)
+                DOF = dof_manager.global_dof(lid, dof)
+                mpc.extend([DOF, coeff])
+            mpc.append(rhs)
+            mpcs.append(mpc)
+        return mpcs
+
+
+@dataclass
+class CompiledExplicitStep(CompiledStep):
+    dt: float | None = None
+    damping: float = 0.0
+    history_interval: int = 0
+    solver_options: dict[str, Any] = field(default_factory=dict)
+    time_history: list[float] = field(default_factory=list)
+    u_history: list[NDArray] = field(default_factory=list)
+    kinetic_energy_history: list[float] = field(default_factory=list)
+    internal_energy_history: list[float] = field(default_factory=list)
+
+    def estimate_stable_dt(self, blocks: list[Any]) -> float:
+        dt_min = np.inf
+
+        for block in blocks:
+            material = block.material
+            density = material.density
+            youngs_modulus = material.youngs_modulus
+
+            wave_speed = np.sqrt(youngs_modulus / density)
+
+            coords = block.coords
+            conn = block.connect
+
+            for elem_nodes in conn:
+                x = coords[np.asarray(elem_nodes) - 1]
+                edge_lengths = np.linalg.norm(x - np.roll(x, -1, axis=0), axis=1)
+                char_length = np.min(edge_lengths)
+                dt_elem = char_length / wave_speed
+                dt_min = min(dt_min, dt_elem)
+
+        if not np.isfinite(dt_min) or dt_min <= 0.0:
+            raise RuntimeError("Could not estimate a stable explicit time step")
+
+        return 0.5 * dt_min
+
+    def solve(
+        self,
+        fun: Callable[..., tuple[NDArray, NDArray]],
+        u0: NDArray,
+        ndata: NodeData,
+        args: tuple[Any, ...] = (),
+    ) -> NDArray:
+        ddofs = self.ddofs
+        ndof = len(u0)
+        fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
+        neq = len(self.equations) if self.equations else 0
+
+        dofs, blocks, _ = args
+
+        if self.dt is None:
+            dt = self.estimate_stable_dt(blocks)
+        else:
+            dt = self.dt
+
+        if dt <= 0.0:
+            raise ValueError("Explicit step dt must be positive")
+
+        print(f"Estimated explicit dt = {dt:.6e}")
+
+        ninc = max(1, int(np.ceil(self.period / dt)))
+        dt = self.period / ninc
+
+        print(f"Using fixed explicit dt = {dt:.6e} with ninc = {ninc}")
+
+        u = u0.copy()
+        v = np.zeros_like(u0)
+        a = np.zeros_like(u0)
+        lagrange = np.zeros(neq, dtype=float)
+
+        self.time_history = []
+        self.u_history = []
+        self.kinetic_energy_history = []
+        self.internal_energy_history = []
+
+
+        K = np.zeros((ndof, ndof), dtype=float)
+        R = np.zeros(ndof, dtype=float)
+
+        mdiag = np.zeros(ndof, dtype=float)
+        for b, block in enumerate(blocks):
+            bft = dofs.block_freedom_table(b)
+            mdiag[bft] += block.lumped_mass()
+
+        if np.any(mdiag[fdofs] <= 0.0):
+            raise RuntimeError("Non-positive lumped mass on free DOFs")
+
+        dvals0 = self.dvals[0, :]
+
+        x = u[fdofs]
+        if neq > 0:
+            x = np.hstack([x, lagrange])
+
+        kernel = AssemblyKernel(
+            fun,
+            u,
+            args=args,
+            step=self.number,
+            increment=0,
+            time=(self.start, self.start),
+            dt=dt,
+            ddofs=ddofs,
+            dvals=dvals0,
+            nbcs=self.nbcs,
+            dloads=self.dloads,
+            dsloads=self.dsloads,
+            rloads=self.rloads,
+            equations=self.equations,
+        )
+
+        kernel(x)
+        R = kernel.resid
+        K = kernel.stiff
+        a[fdofs] = (-R[fdofs] - self.damping * v[fdofs]) / mdiag[fdofs]
+
+        # Central difference uses velocity at the half step
+        v_half = np.zeros_like(u0)
+        v_half[fdofs] = v[fdofs] - 0.5 * dt * a[fdofs]
+
+        for increment in range(1, ninc + 1):
+            t_old = self.start + (increment - 1) * dt
+            t_new = self.start + increment * dt
+            time = (t_old, t_new)
+
+            alpha = increment / ninc
+            dvals = self.dvals[0, :] + alpha * (self.dvals[1, :] - self.dvals[0, :])
+
+            x = u[fdofs]
+            if neq > 0:
+                x = np.hstack([x, lagrange])
+
+            kernel = AssemblyKernel(
+                fun,
+                u,
+                args=args,
+                step=self.number,
+                increment=increment,
+                time=time,
+                dt=dt,
+                ddofs=ddofs,
+                dvals=dvals,
+                nbcs=self.nbcs,
+                dloads=self.dloads,
+                dsloads=self.dsloads,
+                rloads=self.rloads,
+                equations=self.equations,
+            )
+
+            kernel(x)
+            R = kernel.resid
+            K = kernel.stiff
+
+            a[fdofs] = (-R[fdofs] - self.damping * v[fdofs]) / mdiag[fdofs]
+            v_half[fdofs] += dt * a[fdofs]
+            u[fdofs] += dt * v_half[fdofs]
+
+            # Recover velocity at the full time step for output
+            v[fdofs] = v_half[fdofs] - 0.5 * dt * a[fdofs]
+
+            u[ddofs] = dvals
+            v[ddofs] = 0.0
+            a[ddofs] = 0.0
+            v_half[ddofs] = 0.0
+
+            progress = 100.0 * increment / ninc
+            print(
+                f"[ExplicitStep] inc={increment}/{ninc}  "
+                f"time={t_new:.6e}  progress={progress:6.2f}%"
+            )
+
+            if self.history_interval > 0:
+                if increment % self.history_interval == 0 or increment == ninc:
+                    ke = 0.5 * np.sum(mdiag * v**2)
+                    ie = 0.5 * float(u @ (K @ u))
+                    self.time_history.append(t_new)
+                    self.u_history.append(u.copy())
+                    self.kinetic_energy_history.append(ke)
+                    self.internal_energy_history.append(ie)
+
+        react = np.zeros_like(R)
+        react[ddofs] = R[ddofs]
+        ndim = ndata.dof_manager.ndim
+        nnode = ndata.nnode
+
+        u_node = u[: nnode * ndim].reshape((nnode, ndim))
+        v_node = v[: nnode * ndim].reshape((nnode, ndim))
+        a_node = a[: nnode * ndim].reshape((nnode, ndim))
+        f_node = R[: nnode * ndim].reshape((nnode, ndim))
+
+        ndata.data[1, :, ndata.vectors["u"]] = u_node.T
+        ndata.data[1, :, ndata.vectors["v"]] = v_node.T
+        ndata.data[1, :, ndata.vectors["a"]] = a_node.T
+        ndata.data[1, :, ndata.vectors["f"]] = f_node.T
+
+        self.solution = Solution(
+            stiff=K[:ndof, :ndof],
+            force=R[:ndof],
+            dofs=u[:ndof],
+            react=react,
+            lagrange_multipliers=lagrange,
+            iterations=ninc,
+        )
+
+        return u[:ndof]
+
+
+#        ndata[NodeVar.Fx] = f[0::2]
+#        ndata[NodeVar.Fy] = f[1::2]
+
+
+def normalize(a: Sequence[float]) -> NDArray:
+    v = np.asarray(a, dtype=float)
+    norm = np.linalg.norm(v)
+    if norm == 0.0:
+        raise ValueError("Direction vector must be non-zero")
+    return v / norm

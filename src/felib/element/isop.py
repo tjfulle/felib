@@ -236,6 +236,18 @@ class IsoparametricElement(Element):
             J = np.dot(dN, p)
             A += w * np.linalg.det(J)
         return A
+    
+    def lumped_mass(self, material: Material, p: NDArray) -> NDArray:
+        rho = material.density
+        ndof = self.nnode * self.dof_per_node
+        me = np.zeros((ndof, ndof), dtype=float)
+
+        for w, xi in self.integration_points():
+            J = self.jacobian(p, xi)
+            P = self.pmatrix(xi)
+            me += rho * w * J * np.dot(P, P.T)
+
+        return me.sum(axis=1)
 
     def jacobian(self, p: NDArray, xi: NDArray) -> float:
         """

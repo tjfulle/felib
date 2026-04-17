@@ -15,6 +15,7 @@ from .step import CompiledStep
 from .step import DirectStep
 from .step import HeatTransferStep
 from .step import StaticStep
+from .step import ExplicitStep
 from .step import Step
 from .typing import DLoadT
 from .typing import DSLoadT
@@ -57,6 +58,14 @@ class Simulation:
         step = StaticStep(name=name, ndim=self.model.ndim, period=period, **options)
         self.steps.append(step)
         return step
+    
+    def explicit_step(
+        self, name: str | None = None, period: float = 1.0, **options: Any
+    ) -> ExplicitStep:
+        name = name or f"step-{len(self.steps)}"
+        step = ExplicitStep(name=name, ndim=self.model.ndim, period=period, **options)
+        self.steps.append(step)
+        return step
 
     def direct_step(self, name: str | None = None, period: float = 1.0) -> DirectStep:
         name = name or f"step-{len(self.steps)}"
@@ -94,7 +103,9 @@ class Simulation:
             u = cstep.solve(
                 assemble, u0, self.ndata, args=(self.dof_manager, self.model.blocks, self.ebdata)
             )
-            self.ndata.scatter_dofs(u)
+            if not isinstance(step, ExplicitStep):
+                self.ndata.scatter_dofs(u)
+
             self.advance_state()
             file.update(i + 1, cstep.start, cstep.period, self.ndata, self.ebdata)
             parent = cstep
