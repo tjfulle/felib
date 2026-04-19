@@ -44,7 +44,7 @@ class LinearElastic(Material):
             return D, s
         elif ndir == 3 and nshr == 1:
             # Plane strain: 3 direct components of stress and 1 shear component
-            factor = E / (1 - nu) / (1 - 2 * nu)
+            factor = E / (1 + nu) / (1 - 2 * nu)
             D = factor * np.array(
                 [
                     [1 - nu, nu, nu, 0],
@@ -92,7 +92,7 @@ class LinearElastic(Material):
                 [2.0 / 3.0, -1.0 / 3.0, -1.0 / 3.0, 0.0],
                 [-1.0 / 3.0, 2.0 / 3.0, -1.0 / 3.0, 0.0],
                 [-1.0 / 3.0, -1.0 / 3.0, 2.0 / 3.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 0.5],
             ],
             dtype=float,
         )
