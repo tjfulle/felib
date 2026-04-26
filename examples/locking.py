@@ -31,8 +31,12 @@ def volume_locking_demo():
     p, t = mesh.coords, mesh.connect
     _, ax = felib.plotting.mesh_plot_quad4(p + ua, t, label="Analytic", color="orange", lw=4)
     felib.plotting.mesh_plot_quad4(p + ul, t, label="Full Integration", color="b", ax=ax, ls="-.")
-    felib.plotting.mesh_plot_quad4(p + ur, t, label="Reduced Integration", color="g", ax=ax, ls="--", lw=1.5)
-    felib.plotting.mesh_plot_quad4(p + uh, t, label="Hybrid Element", color="r", ax=ax, ls="--", lw=1.5)
+    felib.plotting.mesh_plot_quad4(
+        p + ur, t, label="Reduced Integration", color="g", ax=ax, ls="--", lw=1.5
+    )
+    felib.plotting.mesh_plot_quad4(
+        p + uh, t, label="Hybrid Element", color="r", ax=ax, ls="--", lw=1.5
+    )
 
     plt.legend(loc="best")
     plt.show()
