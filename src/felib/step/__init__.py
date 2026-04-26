@@ -2,6 +2,8 @@ from .base import CompiledStep
 from .base import Step
 from .direct import CompiledDirectStep
 from .direct import DirectStep
+from .dynamic import CompiledDynamicStep
+from .dynamic import DynamicStep
 from .heat_transfer import CompiledHeatTransferStep
 from .heat_transfer import HeatTransferStep
 from .static import CompiledStaticStep
@@ -13,7 +15,9 @@ __all__ = [
     "CompiledHeatTransferStep",
     "HeatTransferStep",
     "StaticStep",
+    "DynamicStep",
     "CompiledStaticStep",
+    "CompiledDynamicStep",
     "CompiledStep",
     "Step",
 ]
