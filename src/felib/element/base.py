@@ -181,3 +181,6 @@ class Element(ABC):
             Tuple of (element stiffness matrix ke, element residual vector re).
         """
         ...
+
+    def lumped_mass(self, material: Material, xc: NDArray) -> NDArray:
+        raise NotImplementedError
