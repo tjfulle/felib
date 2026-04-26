@@ -2,8 +2,8 @@ from .base import Element
 from .cnd import CPE3
 from .cnd import CPE3NL
 from .cnd import CPE4
-from .cnd import CPE4NL
 from .cnd import CPE4H
+from .cnd import CPE4NL
 from .cnd import CPE4R
 from .cnd import CPE8
 from .cnd import CPE8NL
