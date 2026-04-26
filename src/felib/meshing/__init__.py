@@ -1,5 +1,6 @@
 from .quad import gridmesh2d
 from .quad import gridmesh2d_quad8
+from .quad import plate_with_hole_Q4
 from .quad import rectmesh
 from .quad import rectmesh_quad8
 from .quad import wedgemesh
@@ -20,4 +21,5 @@ __all__ = [
     "TiedMesh",
     "matching_node_pairs",
     "mirrored_tied_mesh",
+    "plate_with_hole_Q4",
 ]

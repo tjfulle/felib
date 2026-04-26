@@ -25,6 +25,7 @@ def volume_locking_demo():
 
     ul = cpe4(mesh, E, Nu, 1.0)
     ur = cpe4r(mesh, E, Nu, 1.0)
+    uh = cpe4h(mesh, E, Nu, 1.0)
     ua = analytic_solution(mesh, E, Nu, 1.0)
 
     p, t = mesh.coords, mesh.connect
@@ -32,6 +33,9 @@ def volume_locking_demo():
     felib.plotting.mesh_plot_quad4(p + ul, t, label="Full Integration", color="b", ax=ax, ls="-.")
     felib.plotting.mesh_plot_quad4(
         p + ur, t, label="Reduced Integration", color="g", ax=ax, ls="--", lw=1.5
+    )
+    felib.plotting.mesh_plot_quad4(
+        p + uh, t, label="Hybrid Element", color="r", ax=ax, ls="--", lw=1.5
     )
 
     plt.legend(loc="best")
@@ -42,6 +46,23 @@ def cpe4(mesh: felib.mesh.Mesh, E: float, Nu: float, pres: float) -> NDArray:
     model = felib.model.Model(mesh, name="volume_locking")
     material = felib.material.LinearElastic(density=2400.0, youngs_modulus=E, poissons_ratio=Nu)
     model.assign_properties(block="Block-1", element=felib.element.CPE4(), material=material)
+
+    simulation = felib.simulation.Simulation(model)
+    step = simulation.static_step()
+
+    step.boundary(nodes="Nodeset-200", dofs=[0], value=0.0)
+    step.boundary(nodes="Nodeset-201", dofs=[1], value=0.0)
+    step.pressure(sideset="Surface-1", magnitude=pres)
+
+    simulation.run()
+    u = simulation.ndata["u"]
+    return u
+
+
+def cpe4h(mesh: felib.mesh.Mesh, E: float, Nu: float, pres: float) -> NDArray:
+    model = felib.model.Model(mesh, name="volume_locking")
+    material = felib.material.LinearElastic(density=2400.0, youngs_modulus=E, poissons_ratio=Nu)
+    model.assign_properties(block="Block-1", element=felib.element.CPE4H(), material=material)
 
     simulation = felib.simulation.Simulation(model)
     step = simulation.static_step()

@@ -89,6 +89,8 @@ class NonlinearNewtonSolver(Solver):
         it: int = 0
         atol = atol or -1.0
         rtol = rtol or 1e-8
+        atol = 1e-6
+        rtol = 1e-6
         maxiter = maxiter or 25
         res_norm: float = 1.0
         while it < maxiter:
