@@ -1,7 +1,4 @@
 import logging
-from dataclasses import dataclass
-from dataclasses import field
-from typing import Any
 from typing import Sequence
 
 from numpy.typing import NDArray
@@ -20,24 +17,6 @@ ArrayLike = NDArray | Sequence
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class MPCConstraint:
-    """Representation of a homogeneous multi-point constraint."""
-
-    slave_dof: int
-    masters: list[tuple[int, float]]
-    offset: float = 0.0
-    name: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_tuple(self) -> tuple[int, list[tuple[int, float]], float]:
-        return (
-            int(self.slave_dof),
-            [(int(m), float(c)) for m, c in self.masters],
-            float(self.offset),
-        )
-
-
 class Model:
     """Finite element model container class."""
 
@@ -47,19 +26,15 @@ class Model:
         self.mesh.freeze()
         self._frozen = False
         self._blocks: list[ElementBlock] = []
-        self._constraints: list[MPCConstraint] = []
-
-    def add_mpc_constraint(self, mpc: MPCConstraint) -> None:
-        if not isinstance(mpc, MPCConstraint):
-            raise TypeError("Model.add_mpc_constraint expects an MPCConstraint")
-        self._constraints.append(mpc)
-
-    def clear_mpc_constraints(self) -> None:
-        self._constraints.clear()
-
-    @property
-    def constraints(self) -> list[MPCConstraint]:
-        return list(self._constraints)
+        # TODO: Constraint registration
+        # The Model should expose an API to register constraints (MPCs,
+        # multipoint constraints, contact definitions) prior to solving.
+        # Suggested additions:
+        # - `self._constraints: list` to store constraint objects
+        # - `add_mpc_constraint(self, mpc)` to attach an `MPCConstraint`
+        #   that will be consulted by the Step/Assembler before solving.
+        # Steps should then query the model for active constraints and either
+        # reduce the system using `T` or assemble augmented matrices.
 
     def freeze(self) -> None:
         if not self._frozen:

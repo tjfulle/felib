@@ -239,18 +239,6 @@ class IsoparametricElement(Element):
             A += w * np.linalg.det(J)
         return A
 
-    def lumped_mass(self, material: Material, p: NDArray) -> NDArray:
-        rho = material.density
-        ndof = self.nnode * self.dof_per_node
-        me = np.zeros((ndof, ndof), dtype=float)
-
-        for w, xi in self.integration_points():
-            J = self.jacobian(p, xi)
-            P = self.pmatrix(xi)
-            me += rho * w * J * np.dot(P, P.T)
-
-        return me.sum(axis=1)
-
     def jacobian(self, p: NDArray, xi: NDArray) -> float:
         """
         Compute the volume Jacobian determinant at xi.
@@ -330,11 +318,10 @@ class IsoparametricElement(Element):
         xi = np.asarray(xi0, dtype=float)
         x_target = np.asarray(x, dtype=float)
 
-        err: float = -1.0
         for it in range(maxiter):
             x_pred = self.interpolate(p, xi)
             res = x_pred - x_target
-            err = float(np.linalg.norm(res))
+            err = np.linalg.norm(res)
             if err < tol:
                 return xi
 
@@ -352,6 +339,7 @@ class IsoparametricElement(Element):
         raise RuntimeError(
             f"map_physical_to_ref failed to converge after {maxiter} iterations (res={err:.3e})"
         )
+
 
     # TODO: Utility to compute interpolation weights at arbitrary physical points
     # For MPC secondary nodes we need shape function values at secondary physical
@@ -516,7 +504,7 @@ class IsoparametricElement(Element):
         dev_stresses: list[NDArray] = []
         pressure_shapes: list[NDArray] = []
         volumetric_strains: list[float] = []
-        # Code lines 359-438 generated with CODEX from ChatGPT, adapted for ME7540
+#Code lines 359-438 generated with CODEX from ChatGPT, adapted for ME7540
 
         for ipt, (w, xi) in enumerate(self.integration_points()):
             J = self.jacobian(p, xi)
@@ -667,27 +655,23 @@ class IsoparametricElement(Element):
         # ————————————————— Volume integration —————————————————
         for ipt, (w, xi) in enumerate(self.integration_points()):
             J = self.jacobian(p, xi)
-            Pmat = self.pmatrix(xi)
-            x = self.interpolate(p, xi)
-
-            # Keep this if you still want the current tangent structure for now
             B = self.bmatrix(p, xi)
+            P = self.pmatrix(xi)
+            x = self.interpolate(p, xi)
 
             # — Internal contribution
             e = np.dot(B, u)
             de = np.dot(B, du) / dt
-
             D, s = self.update_state(
                 material, step, increment, time, dt, eleno, p, u, e, de, pdata[ipt]
             )
-
             ke += w * J * np.dot(np.dot(B.T, D), B)
             re += w * J * np.dot(B.T, s)
 
             # — Body forces
             for dload in dloads:
                 value = dload(step, increment, time, dt, eleno, ipt, x.tolist())
-                re -= w * J * np.dot(Pmat, value)
+                re -= w * J * np.dot(P, value)
 
         # ————————————————— Surface loads —————————————————
         for edge_no, dsload in dsloads:

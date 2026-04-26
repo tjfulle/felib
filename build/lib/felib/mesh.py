@@ -36,7 +36,6 @@ class Mesh:
         self._blocks: list[TopoBlock] = []
         self._sides: list[collections.Side] = []
         self._mpc_interfaces: list[dict] = []
-        self._tied_node_pairs: list[tuple[int, int]] = []
         self._block_elem_map: dict[int, int] = {}
         self._elemsets: dict[str, list[int]] = defaultdict(list)
         self._nodesets: dict[str, list[int]] = defaultdict(list)
@@ -188,11 +187,6 @@ class Mesh:
         return self._mpc_interfaces
 
     @property
-    def tied_node_pairs(self) -> list[tuple[int, int]]:
-        self._require_frozen()
-        return list(self._tied_node_pairs)
-
-    @property
     def block_elem_map(self) -> dict[int, int]:
         self._require_frozen()
         return self._block_elem_map
@@ -309,27 +303,69 @@ class _MeshBuilder:
         # Step 2: identify faces that are only in one element → boundary
         self.mesh._sides.clear()
         self.mesh._mpc_interfaces.clear()
-        self.mesh._tied_node_pairs.clear()
         side_normals: dict[int, list[NDArray]] = defaultdict(list)
-        boundary_sides: list[dict] = []
         for side_nodes, specs in sides.items():
             if len(specs) == 1:
-                boundary_sides.append(self._side_data(specs[0]))
+                b, e, side_no = specs[0]
+                block = self.mesh._blocks[b]
+                conn = block.connect[e]
+                p = block.coords[conn]
+                normal = block.ref_el.edge_normal(side_no, p)
+                gid = block.elem_map[e]
+                lid = self.mesh.elem_map.local(gid)
+                xd = block.ref_el.edge_centroid(side_no, p)
+                info = collections.Side(
+                    element=self.mesh.elements[lid],
+                    x=xd.tolist(),
+                    side=side_no + 1,
+                    normal=normal.tolist(),
+                    on_boundary=True,
+                )
+                self.mesh._sides.append(info)
+                for ln in block.ref_el.edge_nodes(side_no):
+                    gid = block.node_map[conn[ln]]
+                    lid = self.mesh.node_map.local(gid)
+                    side_normals[lid].append(normal)
             elif len(specs) == 2:
                 # Internal interface between two blocks → candidate MPC (tied) interface.
-                side0 = self._side_data(specs[0])
-                side1 = self._side_data(specs[1])
-                if side0["block_no"] == side1["block_no"]:
-                    continue
-                self._append_mpc_interface(side0, side1)
+                (b0, e0, side0), (b1, e1, side1) = specs
+                block0 = self.mesh._blocks[b0]
+                block1 = self.mesh._blocks[b1]
 
-        matched_boundary_sides = self._detect_coincident_boundary_interfaces(boundary_sides)
-        for i, side in enumerate(boundary_sides):
-            if i in matched_boundary_sides:
-                continue
-            self._append_boundary_side(side, side_normals)
+                # Keep consistent ordering: smaller block index is main by default.
+                if b0 < b1:
+                    main_block, main_e, main_side = block0, e0, side0
+                    sec_block, sec_e, sec_side = block1, e1, side1
+                else:
+                    main_block, main_e, main_side = block1, e1, side1
+                    sec_block, sec_e, sec_side = block0, e0, side0
 
-        self._construct_tied_node_pairs()
+                main_ref_nodes = main_block.ref_el.edge_nodes(main_side)
+                sec_ref_nodes = sec_block.ref_el.edge_nodes(sec_side)
+
+                main_gids = [main_block.node_map[n] for n in main_block.connect[main_e][main_ref_nodes]]
+                sec_gids = [sec_block.node_map[n] for n in sec_block.connect[sec_e][sec_ref_nodes]]
+
+                main_coords = self.mesh.coords[np.array(main_gids, dtype=int)]
+                sec_coords = self.mesh.coords[np.array(sec_gids, dtype=int)]
+
+                if np.allclose(main_coords, sec_coords[::-1]):
+                    sec_gids = list(reversed(sec_gids))
+                    sec_coords = sec_coords[::-1]
+
+                node_pairs = list(zip(sec_gids, main_gids))
+
+                self.mesh._mpc_interfaces.append(
+                    {
+                        "main_block": main_block.name,
+                        "secondary_block": sec_block.name,
+                        "main_element": main_block.elem_map[main_e],
+                        "secondary_element": sec_block.elem_map[sec_e],
+                        "main_side": main_side,
+                        "secondary_side": sec_side,
+                        "node_pairs": node_pairs,
+                    }
+                )
 
         for lid, normals in side_normals.items():
             avg_normal = np.mean(normals, axis=0)
@@ -340,117 +376,23 @@ class _MeshBuilder:
             node.on_boundary = True
         return
 
-    def _side_data(self, spec: tuple[int, int, int]) -> dict:
-        b, e, side_no = spec
-        block = self.mesh._blocks[b]
-        conn = block.connect[e]
-        p = block.coords[conn]
-        node_ix = block.ref_el.edge_nodes(side_no)
-        gids = [block.node_map[n] for n in conn[node_ix]]
-        lids = [self.mesh.node_map.local(gid) for gid in gids]
-        coords = self.mesh.coords[np.array(lids, dtype=int)]
-        return {
-            "block_no": b,
-            "block": block,
-            "element_no": e,
-            "side_no": side_no,
-            "gids": gids,
-            "coords": coords,
-            "normal": block.ref_el.edge_normal(side_no, p),
-            "centroid": block.ref_el.edge_centroid(side_no, p),
-        }
-
-    def _append_boundary_side(self, side: dict, side_normals: dict[int, list[NDArray]]) -> None:
-        block = side["block"]
-        gid = block.elem_map[side["element_no"]]
-        lid = self.mesh.elem_map.local(gid)
-        info = collections.Side(
-            element=self.mesh.elements[lid],
-            x=side["centroid"].tolist(),
-            side=side["side_no"] + 1,
-            normal=side["normal"].tolist(),
-            on_boundary=True,
-        )
-        self.mesh._sides.append(info)
-        for gid in side["gids"]:
-            lid = self.mesh.node_map.local(gid)
-            side_normals[lid].append(side["normal"])
-
-    def _detect_coincident_boundary_interfaces(self, boundary_sides: list[dict]) -> set[int]:
-        matched: set[int] = set()
-        for i, side0 in enumerate(boundary_sides):
-            if i in matched:
-                continue
-            for j in range(i + 1, len(boundary_sides)):
-                if j in matched:
-                    continue
-                side1 = boundary_sides[j]
-                if side0["block_no"] == side1["block_no"]:
-                    continue
-                if not self._opposing_sides(side0, side1):
-                    continue
-                if not self._coincident_edge_coords(side0["coords"], side1["coords"]):
-                    continue
-                self._append_mpc_interface(side0, side1)
-                matched.update((i, j))
-                break
-        return matched
-
-    def _append_mpc_interface(self, side0: dict, side1: dict) -> None:
-        if side0["block_no"] < side1["block_no"]:
-            main, secondary = side0, side1
-        else:
-            main, secondary = side1, side0
-
-        main_gids = list(main["gids"])
-        secondary_gids = list(secondary["gids"])
-        if self._matching_edge_coords(main["coords"], secondary["coords"][::-1]):
-            secondary_gids = list(reversed(secondary_gids))
-
-        self.mesh._mpc_interfaces.append(
-            {
-                "main_block": main["block"].name,
-                "secondary_block": secondary["block"].name,
-                "main_element": main["block"].elem_map[main["element_no"]],
-                "secondary_element": secondary["block"].elem_map[secondary["element_no"]],
-                "main_side": main["side_no"],
-                "secondary_side": secondary["side_no"],
-                "node_pairs": list(zip(secondary_gids, main_gids)),
-            }
-        )
-
-    def _construct_tied_node_pairs(self) -> None:
-        pairs: list[tuple[int, int]] = []
-        seen: dict[int, int] = {}
-        for interface in self.mesh._mpc_interfaces:
-            for secondary, main in interface["node_pairs"]:
-                secondary = int(secondary)
-                main = int(main)
-                if secondary == main:
-                    continue
-                if secondary in seen:
-                    if seen[secondary] != main:
-                        raise ValueError(
-                            f"Secondary node {secondary} is tied to multiple main nodes"
-                        )
-                    continue
-                seen[secondary] = main
-                pairs.append((secondary, main))
-        self.mesh._tied_node_pairs.extend(pairs)
-
-    @staticmethod
-    def _matching_edge_coords(coords0: NDArray, coords1: NDArray, tol: float = 1e-12) -> bool:
-        return coords0.shape == coords1.shape and np.allclose(coords0, coords1, atol=tol, rtol=0.0)
-
-    @classmethod
-    def _coincident_edge_coords(cls, coords0: NDArray, coords1: NDArray) -> bool:
-        return cls._matching_edge_coords(coords0, coords1) or cls._matching_edge_coords(
-            coords0, coords1[::-1]
-        )
-
-    @staticmethod
-    def _opposing_sides(side0: dict, side1: dict, tol: float = 1e-8) -> bool:
-        return float(np.dot(side0["normal"], side1["normal"])) < -1.0 + tol
+    # TODO: Tied-contact / MPC interface detection
+    # The mesh builder is a convenient place to detect secondary/main interfaces
+    # once the mesh topology is known. Suggested additions:
+    # - After computing sides and side centroids, detect pairs of opposing
+    #   sides/nodes that should be tied (e.g. via proximity, sideset names,
+    #   or user-specified node/side sets).
+    # - For each secondary node record:
+    #       * secondary global node id
+    #       * main element id (block, elem) and local element nodes
+    #       * physical projection point and local reference coordinate xi
+    # - Store these mappings in `self.metadata['mpc_interfaces']` so later
+    #   the `MPCConstraint` can build interpolation weights using the
+    #   corresponding reference element shape functions.
+    #
+    # Implementation hint: use `ReferenceElement.interpolate` and add an
+    # inverse mapping utility (physical -> reference) in ReferenceElement so
+    # you can evaluate shape functions at arbitrary secondary physical points.
 
     def nodeset(self, name: str, region: Callable[[collections.Node], bool] | NodeSelector) -> None:
         nodesets = self.metadata["nodesets"]
