@@ -14,6 +14,8 @@ from .cnd import CPS4I
 from .cnd import CPS4NL
 from .cnd import CPS8
 from .cnd import CPS8NL
+from .cpnt import CPnT4E
+from .cpnt import CPnT4S
 from .dcnd import DCP3
 from .dcnd import DCP4
 from .isop import IsoparametricElement
@@ -49,4 +51,6 @@ __all__ = [
     "Quad8",
     "ReferenceElement",
     "Tri3",
+    "CPnT4S",
+    "CPnT4E",
 ]
