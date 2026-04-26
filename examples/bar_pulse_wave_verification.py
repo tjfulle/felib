@@ -1,5 +1,5 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.animation import FuncAnimation
 
 
@@ -10,10 +10,7 @@ def buildBarMesh(length, numElems):
 
 
 def barElementStiffness(E, area, le):
-    return (E * area / le) * np.array([
-        [1.0, -1.0],
-        [-1.0,  1.0]
-    ])
+    return (E * area / le) * np.array([[1.0, -1.0], [-1.0, 1.0]])
 
 
 def barElementLumpedMass(rho, area, le):
@@ -80,10 +77,9 @@ def analyticalStressReflected(x, t, length, rho, c, pulseDuration, v0):
 def analyticalStressTotal(xArray, t, length, rho, c, pulseDuration, v0):
     sigma = np.zeros_like(xArray)
     for i, x in enumerate(xArray):
-        sigma[i] = (
-            analyticalStressIncident(x, t, rho, c, pulseDuration, v0)
-            + analyticalStressReflected(x, t, length, rho, c, pulseDuration, v0)
-        )
+        sigma[i] = analyticalStressIncident(
+            x, t, rho, c, pulseDuration, v0
+        ) + analyticalStressReflected(x, t, length, rho, c, pulseDuration, v0)
     return sigma
 
 
@@ -222,7 +218,9 @@ def main():
         a[rightNode] = 0.0
 
         stress = computeElementStress(nodes, conn, u, E)
-        stressAnalytical = analyticalStressTotal(elemMidpoints, tNew, length, rho, c, pulseDuration, v0)
+        stressAnalytical = analyticalStressTotal(
+            elemMidpoints, tNew, length, rho, c, pulseDuration, v0
+        )
 
         timeHist.append(tNew)
         stressFieldHistory.append(stress.copy())
@@ -239,10 +237,12 @@ def main():
     stressFieldHistory = np.array(stressFieldHistory)
     uHistory = np.array(uHistory)
 
-    analyticalHistory = np.array([
-        analyticalStressTotal(elemMidpoints, t, length, rho, c, pulseDuration, v0)
-        for t in timeHist
-    ])
+    analyticalHistory = np.array(
+        [
+            analyticalStressTotal(elemMidpoints, t, length, rho, c, pulseDuration, v0)
+            for t in timeHist
+        ]
+    )
 
     # -----------------------------
     # Quantitative verification metrics
@@ -271,16 +271,24 @@ def main():
             timeHist, sigNum, theoreticalReflectionTime=theoreticalReflection, thresholdFrac=0.05
         )
 
-        incidentError = None if numericalIncident is None else numericalIncident - theoreticalIncident
-        reflectionError = None if numericalReflection is None else numericalReflection - theoreticalReflection
+        incidentError = (
+            None if numericalIncident is None else numericalIncident - theoreticalIncident
+        )
+        reflectionError = (
+            None if numericalReflection is None else numericalReflection - theoreticalReflection
+        )
 
         print(f"  Element {e:3d} at x = {xMid:.6f} m")
-        print(f"    Incident:   theory = {theoreticalIncident:.6e} s, "
-              f"numerical = {numericalIncident:.6e} s, "
-              f"error = {incidentError:.6e} s")
-        print(f"    Reflection: theory = {theoreticalReflection:.6e} s, "
-              f"numerical = {numericalReflection:.6e} s, "
-              f"error = {reflectionError:.6e} s")
+        print(
+            f"    Incident:   theory = {theoreticalIncident:.6e} s, "
+            f"numerical = {numericalIncident:.6e} s, "
+            f"error = {incidentError:.6e} s"
+        )
+        print(
+            f"    Reflection: theory = {theoreticalReflection:.6e} s, "
+            f"numerical = {numericalReflection:.6e} s, "
+            f"error = {reflectionError:.6e} s"
+        )
 
     leftInteriorElem = trackedElems[0]
     numericalPeak = np.max(np.abs(stressHist[leftInteriorElem]))
@@ -311,12 +319,10 @@ def main():
     # Animation: stress + deformed bar
     # -----------------------------
     if showAnimation:
-        fig, (ax1, ax2) = plt.subplots(
-            2, 1, figsize=(11, 8), gridspec_kw={"height_ratios": [2, 1]}
-        )
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 8), gridspec_kw={"height_ratios": [2, 1]})
 
-        numLine, = ax1.plot([], [], lw=2, label="Numerical")
-        anaLine, = ax1.plot([], [], "--", lw=2, label="Analytical")
+        (numLine,) = ax1.plot([], [], lw=2, label="Numerical")
+        (anaLine,) = ax1.plot([], [], "--", lw=2, label="Analytical")
         ax1.axhline(0.0, color="k", linewidth=0.8)
         incMarker = ax1.axvline(0.0, linestyle="--", linewidth=1.2, label="Incident front")
         refMarker = ax1.axvline(length, linestyle=":", linewidth=1.2, label="Reflected front")
@@ -339,7 +345,7 @@ def main():
         ax1.text(elemMidpoints[-1], 0.92 * yTop1, "Fixed wall", ha="right")
 
         ax2.plot(nodes, np.zeros_like(nodes), "--", lw=1.0, label="Undeformed")
-        deformedLine, = ax2.plot([], [], lw=2, marker="o", markersize=3, label="Deformed")
+        (deformedLine,) = ax2.plot([], [], lw=2, marker="o", markersize=3, label="Deformed")
         ax2.axhline(0.0, color="k", linewidth=0.8)
 
         maxDisp = np.max(np.abs(uHistory))
@@ -396,13 +402,7 @@ def main():
         frames = range(0, len(timeHist), frameSkip)
 
         anim = FuncAnimation(
-            fig,
-            update,
-            frames=frames,
-            init_func=init,
-            interval=45,
-            blit=True,
-            repeat=True
+            fig, update, frames=frames, init_func=init, interval=45, blit=True, repeat=True
         )
 
         plt.tight_layout()

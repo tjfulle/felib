@@ -14,9 +14,9 @@ from .io import ExodusFileWriter
 from .step import CompiledStep
 from .step import DirectStep
 from .step import DynamicStep
+from .step import ExplicitStep
 from .step import HeatTransferStep
 from .step import StaticStep
-from .step import ExplicitStep
 from .step import Step
 from .typing import DLoadT
 from .typing import DSLoadT
@@ -59,7 +59,7 @@ class Simulation:
         step = StaticStep(name=name, ndim=self.model.ndim, period=period, **options)
         self.steps.append(step)
         return step
-    
+
     def explicit_step(
         self, name: str | None = None, period: float = 1.0, **options: Any
     ) -> ExplicitStep:

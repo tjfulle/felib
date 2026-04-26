@@ -238,7 +238,7 @@ class IsoparametricElement(Element):
             J = np.dot(dN, p)
             A += w * np.linalg.det(J)
         return A
-    
+
     def lumped_mass(self, material: Material, p: NDArray) -> NDArray:
         rho = material.density
         ndof = self.nnode * self.dof_per_node

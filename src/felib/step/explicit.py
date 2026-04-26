@@ -346,7 +346,6 @@ class CompiledExplicitStep(CompiledStep):
         self.kinetic_energy_history = []
         self.internal_energy_history = []
 
-
         K = np.zeros((ndof, ndof), dtype=float)
         R = np.zeros(ndof, dtype=float)
 

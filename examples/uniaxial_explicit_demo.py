@@ -1,11 +1,12 @@
 import argparse
 import sys
 
-import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
+import numpy as np
+from matplotlib import cm
+from matplotlib import colors
 from matplotlib.animation import FuncAnimation
-from matplotlib import colors, cm
 
 import felib
 
@@ -133,8 +134,7 @@ def exercise(esize: float = 0.05):
         ax_anim.triplot(tri, color="k", linewidth=0.3)
 
         ax_anim.set_title(
-            f"Uniaxial explicit deformation ({frame + 1}/{len(u_frames)}), "
-            f"t = {times[frame]:.6e} s"
+            f"Uniaxial explicit deformation ({frame + 1}/{len(u_frames)}), t = {times[frame]:.6e} s"
         )
         ax_anim.set_aspect("equal")
         ax_anim.set_xlim(xmin, xmax)

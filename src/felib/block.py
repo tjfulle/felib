@@ -152,7 +152,7 @@ class ElementBlock:
             K[np.ix_(eft, eft)] += ke
             R[eft] += re
         return K, R
-    
+
     def lumped_mass(self) -> NDArray:
         m = np.zeros(self.ndof, dtype=float)
 

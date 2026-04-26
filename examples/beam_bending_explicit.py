@@ -2,8 +2,8 @@ import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
-from numpy.typing import NDArray
 from matplotlib.animation import FuncAnimation
+from numpy.typing import NDArray
 
 import felib
 
@@ -13,6 +13,7 @@ Y = felib.Y
 mu = 10000.0
 nu = 0.0
 E = 2.0 * mu * (1.0 + nu)
+
 
 def beam_bending() -> None:
     q4 = beam_bending_quad4()
@@ -95,6 +96,7 @@ def beam_bending() -> None:
     anim = FuncAnimation(fig_anim, update, frames=len(u_frames), interval=100, repeat=True)
     _ = anim
     plt.show()
+
 
 # def beam_bending() -> None:
 
