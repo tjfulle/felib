@@ -115,11 +115,11 @@ class StaticStep(Step):
         if pairs is None:
             if secondary_nodes is None or primary_nodes is None:
                 raise ValueError("Expected pairs or both secondary_nodes and primary_nodes")
-            secondary = _as_list(secondary_nodes)
-            primary = _as_list(primary_nodes)
-            if len(secondary) != len(primary):
+            secondaries = _as_list(secondary_nodes)
+            primaries = _as_list(primary_nodes)
+            if len(secondaries) != len(primaries):
                 raise ValueError("secondary_nodes and primary_nodes must have the same length")
-            pairs = list(zip(secondary, primary))
+            pairs = list(zip(secondaries, primaries))
 
         tie_dofs = self._tie_dofs(dofs)
         for pair in pairs:
@@ -537,10 +537,10 @@ class StaticStep(Step):
         secondary_nodes: str | int | Sequence[int],
         primary_sides: str | Sequence[Sequence[int]],
         tol: float,
-    ) -> list[tuple[int, list[int], NDArray]]:
+    ) -> list[tuple[int, list[int], list[float]]]:
         secondary_gids = self._node_gids(model, secondary_nodes)
         side_specs = self._side_specs(model, primary_sides)
-        ties: list[tuple[int, list[int], NDArray]] = []
+        ties: list[tuple[int, list[int], list[float]]] = []
         for secondary_gid in secondary_gids:
             x = model.coords[model.node_map.local(secondary_gid)]
             best: tuple[float, list[int], NDArray] | None = None
@@ -563,7 +563,7 @@ class StaticStep(Step):
                     f"the primary surface within tol={tol}"
                 )
             _, primary_gids, weights = best
-            ties.append((secondary_gid, primary_gids, weights))
+            ties.append((secondary_gid, primary_gids, weights.tolist()))
         return ties
 
     def _side_specs(
@@ -713,15 +713,14 @@ class CompiledStaticStep(CompiledStep):
     ) -> NDArray:
         ddofs = self.ddofs
         ndof = len(u0)
-        dof_manager = args[0] if len(args) > 0 and hasattr(args[0], "step_transform") else None
-        use_mpc_reduction = (
-            dof_manager is not None
-            and getattr(dof_manager, "has_mpc_transform", False)
-            and dof_manager.can_apply_mpc_reduction(ddofs)
+        dof_manager: "DOFManager | None" = (
+            args[0] if len(args) > 0 and hasattr(args[0], "node_freedom_type") else None
         )
+        use_mpc_reduction = dof_manager is not None and dof_manager.can_apply_mpc_reduction(ddofs)
         neq = len(self.equations) if self.equations else 0
 
         if use_mpc_reduction:
+            assert dof_manager is not None
             x0 = dof_manager.reduced_initial_values(u0, ddofs)
         else:
             fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
@@ -759,6 +758,7 @@ class CompiledStaticStep(CompiledStep):
             maxiter=self.solver_options.get("maxiter"),
         )
         if use_mpc_reduction:
+            assert dof_manager is not None
             u = dof_manager.expand_step_solution(state.x[:nf], ddofs, self.dvals[1, :])
         else:
             u = u0.copy()

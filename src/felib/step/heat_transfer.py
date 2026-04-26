@@ -201,7 +201,7 @@ class HeatTransferStep(Step):
             mpc.append(rhs)
             mpcs.append(mpc)
         for constraint in model.constraints:
-            mpcs.append(list(constraint.to_tuple()))
+            mpcs.append(list(constraint.to_tuple()))  # type: ignore
         return mpcs
 
 

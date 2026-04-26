@@ -58,15 +58,14 @@ class CompiledDirectStep(CompiledStep):
     ) -> NDArray:
         ddofs = self.ddofs
         ndof = len(u0)
-        dof_manager = args[0] if len(args) > 0 and hasattr(args[0], "step_transform") else None
-        use_mpc_reduction = (
-            dof_manager is not None
-            and getattr(dof_manager, "has_mpc_transform", False)
-            and dof_manager.can_apply_mpc_reduction(ddofs)
+        dof_manager: DOFManager | None = (
+            args[0] if len(args) > 0 and isinstance(args[0], DOFManager) else None
         )
+        use_mpc_reduction = dof_manager is not None and dof_manager.can_apply_mpc_reduction(ddofs)
         neq = len(self.equations) if self.equations else 0
 
         if use_mpc_reduction:
+            assert dof_manager is not None
             x0 = dof_manager.reduced_initial_values(u0, ddofs)
         else:
             fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
@@ -101,6 +100,7 @@ class CompiledDirectStep(CompiledStep):
         # Construct final displacement
         # -------------------------------------------------
         if use_mpc_reduction:
+            assert dof_manager is not None
             u = dof_manager.expand_step_solution(state.x[:nf], ddofs, self.dvals[1, :])
         else:
             u = u0.copy()

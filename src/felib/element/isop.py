@@ -330,10 +330,11 @@ class IsoparametricElement(Element):
         xi = np.asarray(xi0, dtype=float)
         x_target = np.asarray(x, dtype=float)
 
+        err: float = -1.0
         for it in range(maxiter):
             x_pred = self.interpolate(p, xi)
             res = x_pred - x_target
-            err = np.linalg.norm(res)
+            err = float(np.linalg.norm(res))
             if err < tol:
                 return xi
 
