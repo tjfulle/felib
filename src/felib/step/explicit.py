@@ -20,7 +20,6 @@ from ..collections import Solution
 from ..collections import TractionLoad
 from ..constants import NodeVariable
 from ..constants import SpatialVectorVar
-from ..solver import NonlinearNewtonSolver
 from ..typing import DLoadT
 from ..typing import DSLoadT
 from ..typing import RLoadT
@@ -33,9 +32,28 @@ if TYPE_CHECKING:
     from ..model import Model
 
 
-class StaticStep(Step):
+class ExplicitStep(Step):
     def __init__(self, name: str, ndim: int, period: float = 1.0, **options: Any) -> None:
         super().__init__(name=name, ndim=ndim, period=period)
+
+        dt = options.pop("dt", None)
+        self.dt = None if dt is None else float(dt)
+
+        if self.dt is not None and self.dt <= 0.0:
+            raise ValueError("Explicit step dt must be positive")
+
+        damping = options.pop("damping", 0.0)
+        self.damping = float(damping)
+
+        if self.damping < 0.0:
+            raise ValueError("Explicit step damping must be non-negative")
+
+        history_interval = options.pop("history_interval", 0)
+        self.history_interval = int(history_interval)
+
+        if self.history_interval < 0:
+            raise ValueError("Explicit step history_interval must be non-negative")
+
         self.solver_opts = options
 
     def boundary(
@@ -98,10 +116,13 @@ class StaticStep(Step):
     def compile(
         self, model: "Model", dof_manager: "DOFManager", parent: CompiledStep | None
     ) -> CompiledStep:
-        return CompiledStaticStep(
+        return CompiledExplicitStep(
             name=self.name,
             parent=parent,
             period=self.period,
+            dt=self.dt,
+            damping=self.damping,
+            history_interval=self.history_interval,
             dbcs=self.compile_dbcs(model, dof_manager),
             nbcs=self.compile_nbcs(model, dof_manager),
             dloads=self.compile_dloads(model),
@@ -112,7 +133,12 @@ class StaticStep(Step):
         )
 
     def node_variables(self) -> list[NodeVariable]:
-        variables: list[NodeVariable] = [SpatialVectorVar("u"), SpatialVectorVar("f")]
+        variables: list[NodeVariable] = [
+            SpatialVectorVar("u"),
+            SpatialVectorVar("v"),
+            SpatialVectorVar("a"),
+            SpatialVectorVar("f"),
+        ]
         return variables
 
     def compile_dbcs(self, model: "Model", dof_manager: "DOFManager") -> list[tuple[int, float]]:
@@ -165,7 +191,7 @@ class StaticStep(Step):
             elif isinstance(elements, int):
                 lids = [model.elem_map.local(elements)]
             else:
-                lids = [model.node_map.local(gid) for gid in elements]
+                lids = [model.elem_map.local(gid) for gid in elements]
             if ltype == "gravity":
                 pass
             elif ltype == "dload":
@@ -217,8 +243,8 @@ class StaticStep(Step):
                 raise ValueError(f"side set {sideset} not defined")
             for ele_no, edge_no in model.sidesets[sideset]:
                 block_no = model.block_elem_map[ele_no]
-                block = model.mesh.blocks[block_no]
-                gid = block.elem_map[ele_no]
+                block = model.blocks[block_no]
+                gid = model.elem_map[ele_no]
                 lid = block.elem_map.local(gid)
                 rload = RobinLoad(edge=edge_no, H=H, u0=u0)
                 rloads[block_no][lid].append(rload)
@@ -246,8 +272,40 @@ class StaticStep(Step):
 
 
 @dataclass
-class CompiledStaticStep(CompiledStep):
+class CompiledExplicitStep(CompiledStep):
+    dt: float | None = None
+    damping: float = 0.0
+    history_interval: int = 0
     solver_options: dict[str, Any] = field(default_factory=dict)
+    time_history: list[float] = field(default_factory=list)
+    u_history: list[NDArray] = field(default_factory=list)
+    kinetic_energy_history: list[float] = field(default_factory=list)
+    internal_energy_history: list[float] = field(default_factory=list)
+
+    def estimate_stable_dt(self, blocks: list[Any]) -> float:
+        dt_min = np.inf
+
+        for block in blocks:
+            material = block.material
+            density = material.density
+            youngs_modulus = material.youngs_modulus
+
+            wave_speed = np.sqrt(youngs_modulus / density)
+
+            coords = block.coords
+            conn = block.connect
+
+            for elem_nodes in conn:
+                x = coords[np.asarray(elem_nodes) - 1]
+                edge_lengths = np.linalg.norm(x - np.roll(x, -1, axis=0), axis=1)
+                char_length = np.min(edge_lengths)
+                dt_elem = char_length / wave_speed
+                dt_min = min(dt_min, dt_elem)
+
+        if not np.isfinite(dt_min) or dt_min <= 0.0:
+            raise RuntimeError("Could not estimate a stable explicit time step")
+
+        return 0.5 * dt_min
 
     def solve(
         self,
@@ -259,58 +317,162 @@ class CompiledStaticStep(CompiledStep):
         ddofs = self.ddofs
         ndof = len(u0)
         fdofs = np.array(sorted(set(range(ndof)) - set(ddofs)))
-        nf = len(fdofs)
         neq = len(self.equations) if self.equations else 0
 
-        x0 = u0[fdofs]
-        if neq > 0:
-            x0 = np.hstack([x0, np.zeros(neq)])
+        dofs, blocks, _ = args
 
-        increment = 1
-        time = (0, self.start)
-        dt = self.period
+        if self.dt is None:
+            dt = self.estimate_stable_dt(blocks)
+        else:
+            dt = self.dt
+
+        if dt <= 0.0:
+            raise ValueError("Explicit step dt must be positive")
+
+        print(f"Estimated explicit dt = {dt:.6e}")
+
+        ninc = max(1, int(np.ceil(self.period / dt)))
+        dt = self.period / ninc
+
+        print(f"Using fixed explicit dt = {dt:.6e} with ninc = {ninc}")
+
+        u = u0.copy()
+        v = np.zeros_like(u0)
+        a = np.zeros_like(u0)
+        lagrange = np.zeros(neq, dtype=float)
+
+        self.time_history = []
+        self.u_history = []
+        self.kinetic_energy_history = []
+        self.internal_energy_history = []
+
+        K = np.zeros((ndof, ndof), dtype=float)
+        R = np.zeros(ndof, dtype=float)
+
+        mdiag = np.zeros(ndof, dtype=float)
+        for b, block in enumerate(blocks):
+            bft = dofs.block_freedom_table(b)
+            mdiag[bft] += block.lumped_mass()
+
+        if np.any(mdiag[fdofs] <= 0.0):
+            raise RuntimeError("Non-positive lumped mass on free DOFs")
+
+        dvals0 = self.dvals[0, :]
+
+        x = u[fdofs]
+        if neq > 0:
+            x = np.hstack([x, lagrange])
+
         kernel = AssemblyKernel(
             fun,
-            u0,
+            u,
             args=args,
             step=self.number,
-            increment=increment,
-            time=time,
+            increment=0,
+            time=(self.start, self.start),
             dt=dt,
             ddofs=ddofs,
-            dvals=self.dvals[1, :],
+            dvals=dvals0,
             nbcs=self.nbcs,
             dloads=self.dloads,
             dsloads=self.dsloads,
             rloads=self.rloads,
             equations=self.equations,
         )
-        solver = NonlinearNewtonSolver()
-        state = solver(
-            kernel,
-            x0,
-            atol=self.solver_options.get("atol"),
-            rtol=self.solver_options.get("rtol"),
-            maxiter=self.solver_options.get("maxiter"),
-        )
-        u = u0.copy()
-        u[fdofs] = state.x[:nf]
-        u[ddofs] = self.dvals[1, :]
 
+        kernel(x)
         R = kernel.resid
         K = kernel.stiff
+        a[fdofs] = (-R[fdofs] - self.damping * v[fdofs]) / mdiag[fdofs]
+
+        # Central difference uses velocity at the half step
+        v_half = np.zeros_like(u0)
+        v_half[fdofs] = v[fdofs] - 0.5 * dt * a[fdofs]
+
+        for increment in range(1, ninc + 1):
+            t_old = self.start + (increment - 1) * dt
+            t_new = self.start + increment * dt
+            time = (t_old, t_new)
+
+            alpha = increment / ninc
+            dvals = self.dvals[0, :] + alpha * (self.dvals[1, :] - self.dvals[0, :])
+
+            x = u[fdofs]
+            if neq > 0:
+                x = np.hstack([x, lagrange])
+
+            kernel = AssemblyKernel(
+                fun,
+                u,
+                args=args,
+                step=self.number,
+                increment=increment,
+                time=time,
+                dt=dt,
+                ddofs=ddofs,
+                dvals=dvals,
+                nbcs=self.nbcs,
+                dloads=self.dloads,
+                dsloads=self.dsloads,
+                rloads=self.rloads,
+                equations=self.equations,
+            )
+
+            kernel(x)
+            R = kernel.resid
+            K = kernel.stiff
+
+            a[fdofs] = (-R[fdofs] - self.damping * v[fdofs]) / mdiag[fdofs]
+            v_half[fdofs] += dt * a[fdofs]
+            u[fdofs] += dt * v_half[fdofs]
+
+            # Recover velocity at the full time step for output
+            v[fdofs] = v_half[fdofs] - 0.5 * dt * a[fdofs]
+
+            u[ddofs] = dvals
+            v[ddofs] = 0.0
+            a[ddofs] = 0.0
+            v_half[ddofs] = 0.0
+
+            progress = 100.0 * increment / ninc
+            print(
+                f"[ExplicitStep] inc={increment}/{ninc}  "
+                f"time={t_new:.6e}  progress={progress:6.2f}%"
+            )
+
+            if self.history_interval > 0:
+                if increment % self.history_interval == 0 or increment == ninc:
+                    ke = 0.5 * np.sum(mdiag * v**2)
+                    ie = 0.5 * float(u @ (K @ u))
+                    self.time_history.append(t_new)
+                    self.u_history.append(u.copy())
+                    self.kinetic_energy_history.append(ke)
+                    self.internal_energy_history.append(ie)
+
         react = np.zeros_like(R)
         react[ddofs] = R[ddofs]
+        ndim = ndata.dof_manager.ndim
+        nnode = ndata.nnode
+
+        u_node = u[: nnode * ndim].reshape((nnode, ndim))
+        v_node = v[: nnode * ndim].reshape((nnode, ndim))
+        a_node = a[: nnode * ndim].reshape((nnode, ndim))
+        f_node = R[: nnode * ndim].reshape((nnode, ndim))
+
+        ndata.data[1, :, ndata.vectors["u"]] = u_node.T
+        ndata.data[1, :, ndata.vectors["v"]] = v_node.T
+        ndata.data[1, :, ndata.vectors["a"]] = a_node.T
+        ndata.data[1, :, ndata.vectors["f"]] = f_node.T
+
         self.solution = Solution(
             stiff=K[:ndof, :ndof],
             force=R[:ndof],
             dofs=u[:ndof],
             react=react,
-            lagrange_multipliers=state.x[nf:],
-            iterations=state.iterations,
+            lagrange_multipliers=lagrange,
+            iterations=ninc,
         )
 
-        f = np.dot(K[:ndof, :ndof], u[:ndof])
         return u[:ndof]
 
 
@@ -319,5 +481,8 @@ class CompiledStaticStep(CompiledStep):
 
 
 def normalize(a: Sequence[float]) -> NDArray:
-    v = np.asarray(a)
-    return v / np.linalg.norm(v)
+    v = np.asarray(a, dtype=float)
+    norm = np.linalg.norm(v)
+    if norm == 0.0:
+        raise ValueError("Direction vector must be non-zero")
+    return v / norm

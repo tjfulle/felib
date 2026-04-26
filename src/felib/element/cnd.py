@@ -292,6 +292,39 @@ class CPE4(CPX4):
         return B
 
 
+class CPE4H(CPE4):
+    """Plane strain quadrilateral with hybrid u-p fomulation, constant pressure."""
+
+    uses_local_pressure = True
+    ndir = 3
+    nshr = 1
+    npressure = 1
+
+    def history_variables(self) -> list[str]:
+        names = super().history_variables()
+        names.extend(["p", "ev"])
+        return names
+
+    def bmatrix(self, p: NDArray, xi: NDArray) -> NDArray:
+        dNdx = self.shape_gradient(p, xi)
+        B = np.zeros((4, 8))
+        B[0, 0::2] = dNdx[0]
+        B[1, 1::2] = dNdx[1]
+        B[3, 0::2] = dNdx[1]
+        B[3, 1::2] = dNdx[0]
+        return B
+
+    def bmatrix_vol(self, p: NDArray, xi: NDArray) -> NDArray:
+        dNdx = self.shape_gradient(p, xi)
+        Bv = np.zeros((1, 8))
+        Bv[0, 0::2] = dNdx[0, :]
+        Bv[0, 1::2] = dNdx[1, :]
+        return Bv
+
+    def pressure_shape(self, xi: NDArray) -> NDArray:
+        return np.ones((1, self.npressure), dtype=float)
+
+
 class CPE4R(CPS4):
     """Plane strain constant strain quadrilateral element, reduced integration"""
 
@@ -329,12 +362,12 @@ class CPE4R(CPS4):
             dsloads=dsloads,
             rloads=rloads,
         )
-        khg, rhg = self.hourglass_terms(p, u)
+        khg, rhg = self.hourglass_terms(p, u, material)
         ke += khg
         re += rhg
         return ke, re
 
-    def hourglass_terms(self, p, u):
+    def hourglass_terms(self, p, u, material):
         ndof = self.nnode * self.dof_per_node
         Khg = np.zeros((ndof, ndof))
         Rhg = np.zeros(ndof)
@@ -344,7 +377,7 @@ class CPE4R(CPS4):
             q = np.dot(h, u)
             Khg += np.outer(h, h)
             Rhg += q * h
-        scale = self.hg_alpha * J
+        scale = material.hourglass_stiffness * J
         Khg *= scale
         Rhg *= scale
         return Khg, Rhg
@@ -353,15 +386,12 @@ class CPE4R(CPS4):
         # shape gradients at center
         xi = np.zeros(2)
         dNdx = self.shape_gradient(p, xi)  # (2, 4)
-
         # canonical scalar patterns (node space)
         patterns = [
             np.array([1, -1, 1, -1], dtype=float),
             np.array([1, 1, -1, -1], dtype=float),
         ]
-
         H = []
-
         for g in patterns:
             g = g.copy()
             # ---- projection: remove strain-producing part ----
