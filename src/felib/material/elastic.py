@@ -56,3 +56,8 @@ class LinearElastic(Material):
             s = np.dot(D, e)
             return D, s
         raise NotImplementedError(f"{ndir=}, {nshr=}")
+
+    @property
+    def hourglass_stiffness(self) -> float:
+        shear_modulus = self.youngs_modulus / (2 * (1 + self.poissons_ratio))
+        return 0.5 * shear_modulus

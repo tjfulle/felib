@@ -329,12 +329,12 @@ class CPE4R(CPS4):
             dsloads=dsloads,
             rloads=rloads,
         )
-        khg, rhg = self.hourglass_terms(p, u)
+        khg, rhg = self.hourglass_terms(p, u, material)
         ke += khg
         re += rhg
         return ke, re
 
-    def hourglass_terms(self, p, u):
+    def hourglass_terms(self, p, u, material):
         ndof = self.nnode * self.dof_per_node
         Khg = np.zeros((ndof, ndof))
         Rhg = np.zeros(ndof)
@@ -344,7 +344,7 @@ class CPE4R(CPS4):
             q = np.dot(h, u)
             Khg += np.outer(h, h)
             Rhg += q * h
-        scale = self.hg_alpha * J
+        scale = material.hourglass_stiffness * J
         Khg *= scale
         Rhg *= scale
         return Khg, Rhg
@@ -353,15 +353,12 @@ class CPE4R(CPS4):
         # shape gradients at center
         xi = np.zeros(2)
         dNdx = self.shape_gradient(p, xi)  # (2, 4)
-
         # canonical scalar patterns (node space)
         patterns = [
             np.array([1, -1, 1, -1], dtype=float),
             np.array([1, 1, -1, -1], dtype=float),
         ]
-
         H = []
-
         for g in patterns:
             g = g.copy()
             # ---- projection: remove strain-producing part ----

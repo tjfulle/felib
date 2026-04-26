@@ -37,3 +37,7 @@ class Material:
         if self._density is None:
             raise RuntimeError("Density has not been defined")
         return self._density
+
+    @property
+    def hourglass_stiffness(self) -> float:
+        raise NotImplementedError
